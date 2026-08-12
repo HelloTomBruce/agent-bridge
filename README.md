@@ -73,12 +73,27 @@ start  →  delta* / html* / meta* / stderr*  →  done(code)
 
 ## 与 html-anything 的替换步骤
 
-当前 html-anything 的 `next/src/lib/agents/` 是源码内嵌实现。抽包后可在任意时刻切换：
+已实测完成：三个 API 路由（agents / convert / draft）改用本包，本地 `lib/agents` 源码已删除。
 
-1. `pnpm -F @html-anything/next add agent-bridge`（或先 `pnpm link` 本地验证）
-2. 将 `@/lib/agents/*` 的 import 改为 `import { detectAgents, invokeAgent, ... } from "agent-bridge"`
-3. 删除 `next/src/lib/agents/{detect,invoke,argv}.ts`（保留 `__tests__` 或一并迁移）
-4. 跑 `pnpm -F @html-anything/next test` + typecheck 验证
+```bash
+# 1. 在 agent-bridge 里产出 tarball（发布前本地引入的标准方式）
+pnpm pack   # → agent-bridge-0.1.0.tgz
+
+# 2. 在宿主项目安装（file: 协议 = 真实解包，与 npm 发布后形态一致）
+pnpm add file:../../agent-bridge/agent-bridge-0.1.0.tgz
+
+# 3. 替换 import
+#    from "@/lib/agents/invoke"  →  from "agent-bridge"
+#    from "@/lib/agents/detect"  →  from "agent-bridge"
+
+# 4. 验证
+pnpm typecheck && pnpm test && pnpm build
+```
+
+> ⚠️ **不要用 `pnpm link:` 协议**：Turbopack（Next 16）无法解析指向仓库外的
+> `link:` symlink（`Module not found: Can't resolve`）。tarball 安装（标准
+> `.pnpm` store 布局）无此问题，且更接近真实 npm 安装。
+> 发布到 npm 后，把依赖改为 `"agent-bridge": "^0.1.0"` 即可。
 
 > 导出名与源码完全一致（`AGENTS`、`DEFAULT_MODEL`、`detectAgents`、`resolveOnPath`、
 > `resolveOpenclawAgentId`、`buildArgv`、`envFor`、`makeParser`、`parseLine`、
