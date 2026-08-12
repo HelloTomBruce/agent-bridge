@@ -2,6 +2,92 @@ import { describe, expect, it } from "vitest";
 import { parseLine, makeParser, extractTextFromLine } from "../src/argv.js";
 
 describe("parseLine opencode", () => {
+  it("rescues canonical HTML from a completed write tool call", () => {
+    const line = JSON.stringify({
+      type: "tool_use",
+      sessionID: "ses_test",
+      part: {
+        type: "tool",
+        tool: "write",
+        callID: "call_01",
+        state: {
+          status: "completed",
+          input: {
+            filePath: "/tmp/oc-test/out.html",
+            content: "<html><body><h1>rescue</h1></body></html>\n",
+          },
+        },
+        id: "prt_01",
+        sessionID: "ses_test",
+        messageID: "msg_01",
+      },
+    });
+    expect(parseLine("opencode", line)).toContainEqual({
+      kind: "html",
+      text: "<html><body><h1>rescue</h1></body></html>\n",
+    });
+  });
+
+  it("does not rescue non-html write targets", () => {
+    const line = JSON.stringify({
+      type: "tool_use",
+      part: {
+        type: "tool",
+        tool: "write",
+        state: {
+          status: "completed",
+          input: {
+            filePath: "/tmp/note.md",
+            content: "# hello",
+          },
+        },
+      },
+    });
+    expect(parseLine("opencode", line)).toEqual([]);
+  });
+
+  it("ignores non-write tools (bash / read)", () => {
+    for (const tool of ["bash", "read", "edit"]) {
+      const line = JSON.stringify({
+        type: "tool_use",
+        part: {
+          type: "tool",
+          tool,
+          state: {
+            status: "completed",
+            input: { command: "ls", filePath: "/tmp/a.html", content: "<html>x</html>" },
+          },
+        },
+      });
+      expect(parseLine("opencode", line), `tool=${tool}`).toEqual([]);
+    }
+  });
+
+  it("ignores in-flight (non-completed) writes", () => {
+    const line = JSON.stringify({
+      type: "tool_use",
+      part: {
+        type: "tool",
+        tool: "write",
+        state: {
+          status: "running",
+          input: { filePath: "/tmp/a.html", content: "<html>partial</html>" },
+        },
+      },
+    });
+    expect(parseLine("opencode", line)).toEqual([]);
+  });
+
+  it("keeps text deltas flowing alongside tool rescues", () => {
+    const line = JSON.stringify({
+      type: "text",
+      part: { type: "text", text: "Done. out.html written." },
+    });
+    expect(parseLine("opencode", line)).toEqual([
+      { kind: "delta", text: "Done. out.html written." },
+    ]);
+  });
+
   it("extracts text from nested part payload", () => {
     const line = JSON.stringify({
       type: "text",

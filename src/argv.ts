@@ -206,6 +206,16 @@ export function parseLine(agent: string, line: string): AgentParse[] {
  * content. Returns an empty string if no Write/create_file tool_use was found
  * or its input has no usable content field.
  */
+/** Tool names treated as file-write operations across agent protocols. */
+const WRITE_TOOL_NAMES = new Set([
+  "write",
+  "create_file",
+  "createfile",
+  "writefile",
+  "write_file",
+  "filewrite",
+]);
+
 function rescueHtmlFromToolUse(
   content: Array<{ type?: string; name?: string; input?: unknown }> | undefined,
 ): string {
@@ -215,15 +225,7 @@ function rescueHtmlFromToolUse(
     if (!block || block.type !== "tool_use") continue;
     const name = (block.name ?? "").toLowerCase();
     // Match the common file-write tool names across agents.
-    if (
-      name !== "write" &&
-      name !== "create_file" &&
-      name !== "createfile" &&
-      name !== "writefile" &&
-      name !== "write_file" &&
-      name !== "filewrite"
-    )
-      continue;
+    if (!WRITE_TOOL_NAMES.has(name)) continue;
     const input = block.input as Record<string, unknown> | undefined;
     if (!input || typeof input !== "object") continue;
     const path = String(input.file_path ?? input.path ?? input.filename ?? "").toLowerCase();
@@ -389,6 +391,33 @@ function parseLineWithState(agent: string, line: string, state: ParseState): Age
       (value): value is string => typeof value === "string" && value.length > 0,
     );
     if (text) out.push({ kind: "delta", text });
+
+    // Rescue canonical HTML from a completed `write` tool call. opencode
+    // streams tool input under `part.state.input` (not `part.input`), and the
+    // model often prefers Write over streaming the document inline — without
+    // this the generated HTML would be lost entirely (only the trailing
+    // "Done. out.html written…" text arrives as a delta).
+    const toolState = part?.state && typeof part.state === "object"
+      ? (part.state as { status?: string; input?: Record<string, unknown> })
+      : null;
+    if (obj.type === "tool_use" && toolState?.status === "completed") {
+      const tool = String(part?.tool ?? "").toLowerCase();
+      if (WRITE_TOOL_NAMES.has(tool)) {
+        const input = toolState.input ?? {};
+        const filePath = String(input.filePath ?? input.path ?? "").toLowerCase();
+        // Only rescue HTML-ish targets — never grab content for a .md / .txt
+        // sidecar the agent might also be writing.
+        if (!filePath || /\.(html?|htm)$/.test(filePath)) {
+          const content =
+            typeof input.content === "string"
+              ? input.content
+              : typeof input.text === "string"
+                ? input.text
+                : "";
+          if (content.trim()) out.push({ kind: "html", text: content });
+        }
+      }
+    }
     if (obj.type === "step_start" && typeof obj.sessionID === "string") {
       out.push({ kind: "meta", key: "session", value: obj.sessionID });
     }
