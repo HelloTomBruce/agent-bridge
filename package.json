@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "本地 coding-agent CLI 的统一桥接层：检测（detect）、调用（invoke）、协议解析（parse）。零 API key，复用本机已登录 CLI 会话。",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
     }
   },
   "files": ["dist"],
