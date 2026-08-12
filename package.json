@@ -1,0 +1,40 @@
+{
+  "name": "agent-bridge",
+  "version": "0.1.0",
+  "description": "本地 coding-agent CLI 的统一桥接层：检测（detect）、调用（invoke）、协议解析（parse）。零 API key，复用本机已登录 CLI 会话。",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "agent",
+    "cli",
+    "bridge",
+    "claude",
+    "codex",
+    "gemini",
+    "cursor",
+    "llm"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5",
+    "vitest": "^4.1.6"
+  }
+}
