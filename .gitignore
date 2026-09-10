@@ -3,3 +3,7 @@ dist/
 *.log
 .DS_Store
 *.tgz
+
+# 本地 pnpm store：曾被误提交（见 CHANGELOG 0.2.0）。
+# 它是机器本地缓存，不同机器内容不同，进版本库只会制造无意义 diff。
+.pnpm-store/

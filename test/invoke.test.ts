@@ -1,17 +1,41 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { writeFileSync, chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { invokeAgent, SIGKILL_GRACE_MS, type InvokeEvent } from "../src/invoke.js";
 import { buildArgv, UnsupportedAgentProtocolError } from "../src/argv.js";
 
-// The fake agents below are POSIX `sh` scripts, which Windows cannot execute.
-// Skipping is honest about the gap: Windows teardown goes through
-// `taskkill /T` (a different code path from `process.kill(-pid)`) and is
-// therefore NOT covered by CI. Covering it needs a `.cmd` fake agent —
-// tracked in docs/TIER.md. Running these on Windows would fail on the shebang,
-// not on the behaviour under test.
-const posixOnly = process.platform === "win32" ? describe.skip : describe;
+/**
+ * Write a launchable fake agent: a `.cmd` shim on Windows, a `sh` shim
+ * elsewhere, both delegating to the same Node script. This mirrors how npm
+ * actually installs agent CLIs (a shim that exec's node), which is precisely
+ * the shape that made process-group teardown tricky in the first place — the
+ * real agent is a *grandchild* of what we spawn.
+ *
+ * Using Node for the agent body (rather than sh/cmd built-ins) is what lets
+ * these tests run on Windows at all, so the `taskkill /T` path is covered
+ * instead of skipped.
+ */
+function writeShim(dir: string, name: string, scenario: string, marker?: string): string {
+  const agent = fileURLToPath(new URL("./helpers/fake-agent.mjs", import.meta.url));
+  const args = [agent, scenario, ...(marker ? [marker] : [])]
+    .map((a) => `"${a}"`)
+    .join(" ");
+  if (process.platform === "win32") {
+    const p = join(dir, `${name}.cmd`);
+    // %* forwards the agent's own argv; the shim ignores it.
+    writeFileSync(p, `@echo off\r\n"${process.execPath}" ${args} %*\r\n`, "utf8");
+    return p;
+  }
+  const p = join(dir, name);
+  writeFileSync(p, `#!/bin/sh\nexec "${process.execPath}" ${args} "$@"\n`, "utf8");
+  chmodSync(p, 0o755);
+  return p;
+}
+
+/** Only meaningful on POSIX: Windows has no SIGTERM for an agent to trap. */
+const posixOnlyIt = process.platform === "win32" ? it.skip : it;
 
 /** Drain a ReadableStream<InvokeEvent> to a plain array. */
 async function drain(stream: ReadableStream<InvokeEvent>): Promise<InvokeEvent[]> {
@@ -122,30 +146,19 @@ describe("error codes", () => {
   });
 });
 
-posixOnly("invokeAgent — fake child process", () => {
-  // A real shell script that speaks claude's stream-json shape.
-  let fakeBin: string;
+describe("invokeAgent — fake child process", () => {
+  // A fake agent that speaks claude's stream-json shape.
+  const dir = join(tmpdir(), "agent-bridge-fake-claude-dir");
 
   beforeAll(() => {
-    fakeBin = join(tmpdir(), "agent-bridge-fake-claude");
-    writeFileSync(
-      fakeBin,
-      [
-        "#!/bin/sh",
-        // read stdin prompt, echo a stream_event delta + result envelope
-        "read -r _line",
-        'echo \'{"type":"system","subtype":"init","model":"claude-sonnet","session_id":"s1"}\'',
-        'echo \'{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"<p>ok</p>"}}}\'',
-        'echo \'{"type":"result","subtype":"success","usage":{"input_tokens":5}}\'',
-        "exit 0",
-      ].join("\n"),
-    );
-    chmodSync(fakeBin, 0o755);
-    process.env.CLAUDE_BIN = fakeBin;
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    process.env.CLAUDE_BIN = writeShim(dir, "fake-claude", "claude-turn");
   });
 
   afterAll(() => {
     delete process.env.CLAUDE_BIN;
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("emits start → deltas/meta → end(ok)", async () => {
@@ -197,15 +210,8 @@ posixOnly("invokeAgent — fake child process", () => {
 // way to prove the process is gone: pid probing races with pid reuse, and
 // `ps` is not available in every sandbox.
 // ---------------------------------------------------------------------------
-posixOnly("process lifetime — no orphan leaks", () => {
+describe("process lifetime — no orphan leaks", () => {
   const markerDir = join(tmpdir(), "agent-bridge-lifetime");
-
-  // Two stream-json lines every fake agent emits before it forks/sleeps, so
-  // the test can be sure the script is actually running before tearing down.
-  const PREAMBLE = [
-    `echo '{"type":"system","subtype":"init","model":"x","session_id":"s1"}'`,
-    `echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}}'`,
-  ];
 
   beforeAll(() => {
     rmSync(markerDir, { recursive: true, force: true });
@@ -216,12 +222,8 @@ posixOnly("process lifetime — no orphan leaks", () => {
     rmSync(markerDir, { recursive: true, force: true });
   });
 
-  const writeFakeBin = (name: string, lines: string[]): string => {
-    const p = join(markerDir, name);
-    writeFileSync(p, ["#!/bin/sh", ...lines].join("\n"), "utf8");
-    chmodSync(p, 0o755);
-    return p;
-  };
+  const writeFakeBin = (name: string, scenario: string, marker?: string): string =>
+    writeShim(markerDir, name, scenario, marker);
 
   /** Read events until the first `delta` — i.e. the fake agent is live. */
   async function readUntilDelta(
@@ -236,11 +238,7 @@ posixOnly("process lifetime — no orphan leaks", () => {
 
   it("cancel() kills the child — the most common leak path (SSE client disconnect)", async () => {
     const marker = join(markerDir, "cancel-leak.txt");
-    const bin = writeFakeBin("fake-cancel", [
-      ...PREAMBLE,
-      "sleep 2",
-      `echo leaked > "${marker}"`,
-    ]);
+    const bin = writeFakeBin("fake-cancel", "sleeper", marker);
 
     const reader = invokeAgent({ agent: "claude", prompt: "hi", binOverride: bin }).getReader();
     await readUntilDelta(reader);
@@ -252,19 +250,10 @@ posixOnly("process lifetime — no orphan leaks", () => {
 
   it("abort kills the whole process group, not just the npm shim", async () => {
     const marker = join(markerDir, "abort-grandchild-leak.txt");
-    // Fork the grandchild BEFORE announcing readiness. PREAMBLE's delta is
-    // what the test waits on, so emitting it first left a window where abort
-    // could land before the grandchild existed — then nothing survives the
-    // kill and the test passes for the wrong reason, or the fork races the
-    // signal and it fails. Ordering the fork first makes "saw a delta" mean
-    // "the grandchild is running", which is the precondition under test.
-    const bin = writeFakeBin("fake-grandchild", [
-      // Mimic an npm shim: the real agent is a grandchild. Signalling only the
-      // direct child would leave this running.
-      `sh -c 'sleep 2; echo leaked > "${marker}"' &`,
-      ...PREAMBLE,
-      "wait",
-    ]);
+    // The scenario forks its grandchild BEFORE announcing readiness, so
+    // "saw a delta" means "the grandchild is running" — otherwise abort could
+    // land in the gap and the test would pass for the wrong reason.
+    const bin = writeFakeBin("fake-grandchild", "grandchild", marker);
 
     const ctl = new AbortController();
     const reader = invokeAgent({
@@ -280,18 +269,16 @@ posixOnly("process lifetime — no orphan leaks", () => {
     expect(existsSync(marker)).toBe(false);
   }, 20_000);
 
-  it("escalates to SIGKILL when the agent traps SIGTERM", async () => {
+  // POSIX-only: Windows has no SIGTERM for an agent to trap — `taskkill /F`
+  // is unconditional, so there is no graceful-then-forceful escalation to
+  // verify there.
+  posixOnlyIt("escalates to SIGKILL when the agent traps SIGTERM", async () => {
     const marker = join(markerDir, "sigkill-grace-leak.txt");
-    const bin = writeFakeBin("fake-stubborn", [
-      "trap '' TERM",
-      ...PREAMBLE,
-      // Writes the marker AFTER the SIGKILL grace window but BEFORE the
-      // assertion below. So a trapped-SIGTERM survivor leaves a marker, while
-      // a SIGKILLed process never gets there. (A longer sleep would make the
-      // test pass vacuously — the marker would simply not be written yet.)
-      "sleep 4",
-      `echo leaked > "${marker}"`,
-    ]);
+    // Writes the marker AFTER the SIGKILL grace window but BEFORE the
+    // assertion below: a trapped-SIGTERM survivor leaves a marker, a SIGKILLed
+    // process never gets there. (A longer delay would make the test pass
+    // vacuously — the marker simply would not be written yet.)
+    const bin = writeFakeBin("fake-stubborn", "stubborn", marker);
 
     const ctl = new AbortController();
     const reader = invokeAgent({
@@ -314,7 +301,7 @@ posixOnly("process lifetime — no orphan leaks", () => {
 // Terminal-event contract: exactly one `end` per invocation, with a status
 // that distinguishes finished / cancelled / timed-out / never-started.
 // ---------------------------------------------------------------------------
-posixOnly("terminal event contract", () => {
+describe("terminal event contract", () => {
   const dir = join(tmpdir(), "agent-bridge-terminal");
 
   beforeAll(() => {
@@ -323,20 +310,13 @@ posixOnly("terminal event contract", () => {
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  const fakeBin = (name: string, lines: string[]): string => {
-    const p = join(dir, name);
-    writeFileSync(p, ["#!/bin/sh", ...lines].join("\n"), "utf8");
-    chmodSync(p, 0o755);
-    return p;
-  };
+  // All the scenarios used here exist in `helpers/fake-agent.mjs`.
+  const wb = (name: string, scenario: string, marker?: string): string =>
+    writeShim(dir, name, scenario, marker);
 
   it("timeoutMs → error + end(timeout), and the child is killed", async () => {
     const marker = join(dir, "timeout-leak.txt");
-    const bin = fakeBin("fake-slow", [
-      `echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}}'`,
-      "sleep 4",
-      `echo leaked > "${marker}"`,
-    ]);
+    const bin = wb("fake-slow", "slow", marker);
 
     const evts = await drain(
       invokeAgent({ agent: "claude", prompt: "hi", binOverride: bin, timeoutMs: 700 }),
@@ -360,10 +340,7 @@ posixOnly("terminal event contract", () => {
   }, 20_000);
 
   it("a run that finishes before timeoutMs still reports end(ok)", async () => {
-    const bin = fakeBin("fake-quick", [
-      `echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}}'`,
-      "exit 0",
-    ]);
+    const bin = wb("fake-quick", "quick");
     const evts = await drain(
       invokeAgent({ agent: "claude", prompt: "hi", binOverride: bin, timeoutMs: 10_000 }),
     );
@@ -371,17 +348,13 @@ posixOnly("terminal event contract", () => {
   }, 20_000);
 
   it("non-zero exit is end(ok) with the code — 'ok' means 'ran to completion'", async () => {
-    const bin = fakeBin("fake-fail", ["exit 3"]);
+    const bin = wb("fake-fail", "fail");
     const evts = await drain(invokeAgent({ agent: "claude", prompt: "hi", binOverride: bin }));
     expect(evts[evts.length - 1]).toEqual({ type: "end", status: "ok", code: 3 });
   }, 20_000);
 
   it("caps runaway stdout that never emits a newline", async () => {
-    // ~24MB on one line, over the 16MB cap.
-    const bin = fakeBin("fake-flood", [
-      `awk 'BEGIN{ s=sprintf("%*s", 1000000, ""); for(i=0;i<24;i++) printf "%s", s }'`,
-      "sleep 5",
-    ]);
+    const bin = wb("fake-flood", "flood");
     const evts = await drain(invokeAgent({ agent: "claude", prompt: "hi", binOverride: bin }));
     expect(
       evts.some(

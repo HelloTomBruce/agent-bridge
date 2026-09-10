@@ -101,6 +101,14 @@ correctness.
 - `typecheck` now covers `test/` as well as `src/`. It previously only included
   `src`, which is how `test/server.test.ts` kept constructing removed `done` /
   `html` events without CI failing.
+- **跨平台进程生命周期测试。** 以前假 agent 用 `#!/bin/sh`，Windows 不可执行，
+  因此 `taskkill /T` 这条销毁路径在 CI 中全 skip。现在用 Node 脚本 + 平台对
+  应的 shim（Windows `.cmd`，其余 `sh`），三平台都真跑。唯一 POSIX-only 的是
+  SIGTERM→SIGKILL 升级用例：Windows 上 `taskkill /F` 无条件强杀，没有可捕获
+  的 SIGTERM 可言。
+- **`.pnpm-store/` 被误提交。** 上一次提交把本地 pnpm 缓存一并带了进去。
+  那是机器本地的二进制缓存，各机内容不同，留在版本库里只会制造无意义 diff。
+  已从索引移除并加入 `.gitignore`。
 - **`pi` is now invocable** (`supported`). It was tagged `protocol: "pi-rpc"`
   and refused at `buildArgv`, which was a misreading: `pi -p --mode json`
   (verified on pi 0.85.1) is plain ndjson over stdout with the prompt as a

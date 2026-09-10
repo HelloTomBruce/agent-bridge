@@ -64,10 +64,10 @@
 
 ## 已知覆盖缺口
 
-- **Windows 进程销毁路径（`taskkill /T`）无测试覆盖**。生命周期测试用
-  `#!/bin/sh` 假 agent，Windows 上不可执行，因此在 CI 中被 skip。
-  要补需要一份 `.cmd` 版本的假 agent。**这是缺口，不是"已通过"。**
 - `experimental` 档中仅 `bob` 有 parse 测试，其余靠人工。
+- SIGTERM→SIGKILL 的升级用例仅在 POSIX 上跑：Windows 没有可被 agent 捕获的
+  SIGTERM，`taskkill /F` 是无条件的，不存在"先温和后强制"这一段可验证。
+  其余生命周期用例（cancel、进程树销毁、超时）在三平台全跑。
 
 ## 模型列表策略
 

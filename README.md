@@ -211,8 +211,10 @@ pnpm test        # vitest run（84 用例：协议解析 / tier 审计 / 错误�
 pnpm build       # tsc → dist/（ESM + .d.ts）
 ```
 
-> 生命周期测试使用 POSIX `sh` 假 agent，**Windows 上会 skip**——那里的销毁走
-> `taskkill /T`，是另一条代码路径，目前无覆盖。这是已知缺口，不是"已通过"。
+> 生命周期测试的假 agent 是 Node 脚本 + 平台对应的 shim（Windows 用 `.cmd`，
+> 其余用 `sh`），所以进程树销毁在三平台真跑——包括 Windows 的 `taskkill /T`
+> 这条独立路径。唯一 POSIX-only 的是 SIGTERM→SIGKILL 升级用例：Windows 上
+> `taskkill /F` 无条件强杀，没有可捕获的 SIGTERM 可言。
 
 ## 发布
 
