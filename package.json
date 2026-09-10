@@ -1,5 +1,5 @@
 {
-  "name": "agent-bridge",
+  "name": "@tombruce/agent-bridge",
   "version": "0.2.0",
   "description": "本地 coding-agent CLI 的统一桥接层：检测（detect）、调用（invoke）、协议解析（parse）。零 API key，复用本机已登录 CLI 会话。",
   "keywords": [

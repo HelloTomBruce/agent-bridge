@@ -1,5 +1,8 @@
 # agent-bridge
 
+> npm 包名为 **`@tombruce/agent-bridge`**：裸名 `agent-bridge` 已被一个同名
+> 无关项目占用，scope 下的名字归属明确，不会再被抢。
+
 本地 coding-agent CLI 的统一桥接层：**检测（detect）→ 调用（invoke）→ 协议解析（parse）**。
 零 API key，复用本机已登录的 CLI 会话（claude login、cursor login、gemini auth …）。
 
@@ -44,7 +47,7 @@
 ## 安装
 
 ```bash
-pnpm add agent-bridge   # 或 npm / yarn
+pnpm add @tombruce/agent-bridge   # 或 npm / yarn
 ```
 
 要求 Node ≥ 20（Node 18 已 EOL，未纳入 CI 测试矩阵，故不声称支持）。
@@ -143,7 +146,7 @@ case "error":
 ## 用法
 
 ```ts
-import { detectAgents, invokeAgent } from "agent-bridge";
+import { detectAgents, invokeAgent } from "@tombruce/agent-bridge";
 
 // 1. 检测本机有哪些 agent 可用
 const agents = detectAgents();
@@ -179,14 +182,14 @@ for (;;) {
 
 ```bash
 # 1. 在 agent-bridge 里产出 tarball（发布前本地引入的标准方式）
-pnpm pack   # → agent-bridge-0.1.0.tgz
+pnpm pack   # → tombruce-agent-bridge-0.2.0.tgz
 
 # 2. 在宿主项目安装（file: 协议 = 真实解包，与 npm 发布后形态一致）
-pnpm add file:../../agent-bridge/agent-bridge-0.1.0.tgz
+pnpm add file:../../agent-bridge/tombruce-agent-bridge-0.2.0.tgz
 
 # 3. 替换 import
-#    from "@/lib/agents/invoke"  →  from "agent-bridge"
-#    from "@/lib/agents/detect"  →  from "agent-bridge"
+#    from "@/lib/agents/invoke"  →  from "@tombruce/agent-bridge"
+#    from "@/lib/agents/detect"  →  from "@tombruce/agent-bridge"
 
 # 4. 验证
 pnpm typecheck && pnpm test && pnpm build
@@ -195,7 +198,7 @@ pnpm typecheck && pnpm test && pnpm build
 > ⚠️ **不要用 `pnpm link:` 协议**：Turbopack（Next 16）无法解析指向仓库外的
 > `link:` symlink（`Module not found: Can't resolve`）。tarball 安装（标准
 > `.pnpm` store 布局）无此问题，且更接近真实 npm 安装。
-> 发布到 npm 后，把依赖改为 `"agent-bridge": "^0.1.0"` 即可。
+> 发布到 npm 后，把依赖改为 `"@tombruce/agent-bridge": "^0.2.0"` 即可。
 
 > 导出名与源码完全一致（`AGENTS`、`DEFAULT_MODEL`、`detectAgents`、`resolveOnPath`、
 > `resolveOpenclawAgentId`、`buildArgv`、`envFor`、`makeParser`、`parseLine`、

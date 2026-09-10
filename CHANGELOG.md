@@ -141,6 +141,16 @@ correctness.
 
 ### Changed (breaking)
 
+- **包名改为 `@tombruce/agent-bridge`。** 裸名 `agent-bridge` 已被
+  `cote-star` 占用（最新 `0.6.2`，是一个跨平台上下文交接 CLI，与本项目
+  无关）。scope 下的名字归属明确，不会再被抢。消费者需同步改 import：
+
+  ```diff
+  - import { invokeAgent } from "agent-bridge";
+  + import { invokeAgent } from "@tombruce/agent-bridge";
+  ```
+
+  子路径导出同理：`agent-bridge/server` → `@tombruce/agent-bridge/server`。
 - **`"pi-rpc"` removed from `AgentProtocol`.** No agent used it once `pi` moved
   to `argv`, and `detectAgents` no longer tests for it. Keeping a member that
   nothing can produce only invites dead branches in consumer switches.
