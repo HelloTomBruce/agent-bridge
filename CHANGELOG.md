@@ -12,6 +12,14 @@ correctness.
 
 ### Fixed
 
+- **`detect` tests failed on Windows.** The fixtures were extension-less files,
+  but Windows only executes what PATHEXT lists and `resolveOnPath` honours
+  that — so the lookup correctly found nothing and four assertions failed. The
+  fakes now carry `.cmd` (matching how npm installs agent CLIs on Windows), the
+  duplicate-PATH test uses `path.delimiter` instead of a hardcoded `:`, and
+  path comparisons are case-insensitive there, since PATHEXT yields `.CMD`
+  while the file on disk is `.cmd`. Caught by the first real CI run; the suite
+  had never executed on Windows before.
 - **`detect` tests failed on machines with a `*_BIN` override exported.**
   `oldEnvOverrides` was declared but never populated — the isolation the author
   started was never finished. Detection reads `process.env[def.envOverride]`

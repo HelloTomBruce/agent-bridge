@@ -1,8 +1,32 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { resolveOnPath, detectAgents, AGENTS, DEFAULT_MODEL } from "../src/detect.js";
+
+/**
+ * Windows only executes files whose extension is listed in PATHEXT, and
+ * `resolveOnPath` honours that. An extension-less fixture is therefore
+ * unfindable there — which is correct behaviour, not a bug — so the fake
+ * binaries carry `.cmd`, matching how npm actually installs agent CLIs on
+ * Windows. This keeps the PATHEXT branch genuinely covered instead of skipped.
+ */
+const BIN_EXT = process.platform === "win32" ? ".cmd" : "";
+
+/**
+ * Compare two paths the way the host filesystem would.
+ *
+ * `resolveOnPath` returns the string it probed — `bin + ext` taken from
+ * PATHEXT, which Windows reports uppercase (`.CMD`). The fixture on disk is
+ * `.cmd`, and NTFS matches it case-insensitively, so the two agree as paths
+ * while differing as strings. Comparing raw strings would fail on Windows for
+ * a purely cosmetic reason.
+ */
+const expectSamePath = (actual: string | null, expected: string): void => {
+  expect(actual).not.toBeNull();
+  const norm = (v: string) => (process.platform === "win32" ? v.toLowerCase() : v);
+  expect(norm(actual!)).toBe(norm(expected));
+};
 
 let dir: string;
 let oldPath: string | undefined;
@@ -18,7 +42,7 @@ const oldEnvOverrides: Record<string, string | undefined> = {};
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "agent-bridge-test-"));
-  const fakeBin = join(dir, "claude");
+  const fakeBin = join(dir, `claude${BIN_EXT}`);
   writeFileSync(fakeBin, "#!/bin/sh\necho fake\n");
   chmodSync(fakeBin, 0o755);
   oldPath = process.env.PATH;
@@ -45,7 +69,7 @@ afterAll(() => {
 
 describe("resolveOnPath", () => {
   it("finds an executable on PATH", () => {
-    expect(resolveOnPath("claude")).toBe(join(dir, "claude"));
+    expectSamePath(resolveOnPath("claude"), join(dir, `claude${BIN_EXT}`));
   });
 
   it("returns null for a missing binary", () => {
@@ -53,8 +77,8 @@ describe("resolveOnPath", () => {
   });
 
   it("dedupes overlapping PATH entries", () => {
-    process.env.PATH = dir + ":" + dir + ":" + dir;
-    expect(resolveOnPath("claude")).toBe(join(dir, "claude"));
+    process.env.PATH = [dir, dir, dir].join(delimiter);
+    expectSamePath(resolveOnPath("claude"), join(dir, `claude${BIN_EXT}`));
   });
 });
 
@@ -66,21 +90,21 @@ describe("detectAgents", () => {
   });
 
   it("honors env overrides over the PATH scan", () => {
-    const other = join(dir, "other-claude");
+    const other = join(dir, `other-claude${BIN_EXT}`);
     writeFileSync(other, "#!/bin/sh\necho other\n");
     chmodSync(other, 0o755);
     process.env.CLAUDE_BIN = other;
     try {
       const claude = detectAgents().find((a) => a.id === "claude");
       expect(claude?.available).toBe(true);
-      expect(claude?.path).toBe(other);
+      expectSamePath(claude?.path ?? null, other);
     } finally {
       delete process.env.CLAUDE_BIN;
     }
   });
 
   it("marks acp agents unsupported but detected when installed", () => {
-    const hermesBin = join(dir, "hermes");
+    const hermesBin = join(dir, `hermes${BIN_EXT}`);
     writeFileSync(hermesBin, "#!/bin/sh\necho hi\n");
     chmodSync(hermesBin, 0o755);
     try {
