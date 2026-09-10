@@ -488,7 +488,7 @@ export function detectAgents(env: NodeJS.ProcessEnv = process.env): DetectedAgen
       protocol,
       tier,
       models: a.fallbackModels,
-      unsupported: unsupported || undefined,
+      ...(unsupported ? { unsupported: true as const } : {}),
     };
     const override = a.envOverride ? env[a.envOverride] : undefined;
     if (override && existsSync(override)) {

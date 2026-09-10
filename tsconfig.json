@@ -20,6 +20,11 @@
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
     "noImplicitReturns": true,
+    // `foo?: T` means "a string or absent", not "a string or explicitly
+    // undefined". Without this, `{ unsupported: undefined }` type-checked
+    // against `unsupported?: boolean` and the declaration quietly lied about
+    // the shape callers receive. Enabling it changed no emitted .d.ts.
+    "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true
   },
   // Tests are typechecked too: `dist` is emitted from tsconfig.build.json,

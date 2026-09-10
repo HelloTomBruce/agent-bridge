@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolveOnPath, resolveOpenclawAgentId, AGENTS, type AgentDef } from "./detect.js";
 import { buildArgv, envFor, makeParser, UnsupportedAgentProtocolError } from "./argv.js";
+import type { AgentArgvOpts } from "./argv.js";
 
 /**
  * Grace period between SIGTERM and SIGKILL when tearing down an agent's
@@ -238,9 +239,13 @@ export function invokeAgent(opts: InvokeOpts): ReadableStream<InvokeEvent> {
       // required `--agent <id>` is satisfied.
       let argv: string[];
       try {
-        const argvOpts: Parameters<typeof buildArgv>[1] = {
-          model: opts.model,
+        // Spread-if-present rather than `model: opts.model`: with
+        // exactOptionalPropertyTypes an explicit `undefined` is no longer the
+        // same as an absent key, and `model?: string` promises the key is
+        // either a string or missing.
+        const argvOpts: AgentArgvOpts = {
           prompt: opts.prompt,
+          ...(opts.model ? { model: opts.model } : {}),
         };
         if (opts.agent === "openclaw") {
           argvOpts.openclawAgentId = await resolveOpenclawAgentId(bin);

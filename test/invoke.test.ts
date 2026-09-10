@@ -107,7 +107,7 @@ describe("error codes", () => {
 
   it("registered agent with no binary → AGENT_NOT_INSTALLED", async () => {
     const evts = await drain(
-      invokeAgent({ agent: "qwen", prompt: "hi", binOverride: undefined }),
+      invokeAgent({ agent: "qwen", prompt: "hi" }),
     );
     const err = evts.find((e) => e.type === "error");
     // Only meaningful when qwen genuinely isn't installed on this machine.
