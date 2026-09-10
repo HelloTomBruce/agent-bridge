@@ -8,12 +8,22 @@
     "strict": true,
     "declaration": true,
     "sourceMap": true,
-    "outDir": "dist",
-    "rootDir": "src",
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
     "noUncheckedIndexedAccess": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    // Zero-dependency correctness checks. These catch the class of mistake
+    // that actually occurs here — dead bindings left behind by a refactor,
+    // and switch cases that fall through while parsing agent protocols —
+    // rather than formatting opinions.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["src"]
+  // Tests are typechecked too: `dist` is emitted from tsconfig.build.json,
+  // which excludes them. Leaving tests out here let `test/server.test.ts` keep
+  // referencing the removed `done` / `html` events without CI noticing.
+  "include": ["src", "test"]
 }
