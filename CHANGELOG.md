@@ -106,6 +106,9 @@ correctness.
   应的 shim（Windows `.cmd`，其余 `sh`），三平台都真跑。唯一 POSIX-only 的是
   SIGTERM→SIGKILL 升级用例：Windows 上 `taskkill /F` 无条件强杀，没有可捕获
   的 SIGTERM 可言。
+  - 假 agent 一律用 `writeSync` 而非 `process.stdout.write`：管道上后者只是
+    入队，`process.exit` 会把没刷出去的直接丢掉。溢出用例因此在慢 runner 上
+    只送达约 786 KB（实测），够不到 16 MB 上限而误报失败。
 - **`.pnpm-store/` 被误提交。** 上一次提交把本地 pnpm 缓存一并带了进去。
   那是机器本地的二进制缓存，各机内容不同，留在版本库里只会制造无意义 diff。
   已从索引移除并加入 `.gitignore`。

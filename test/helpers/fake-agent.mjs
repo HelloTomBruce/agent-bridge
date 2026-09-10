@@ -9,13 +9,28 @@
  * Behaviour is selected by argv[2] (the scenario name); everything else on the
  * command line is the agent's own argv and is ignored.
  */
-import { writeFileSync } from "node:fs";
+import { writeFileSync, writeSync } from "node:fs";
 import { spawn } from "node:child_process";
 
 const scenario = process.argv[2];
 const marker = process.argv[3];
 
-const emit = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
+/**
+ * Write to fd 1 *synchronously*. `process.stdout.write` only queues on a pipe,
+ * and `process.exit` discards whatever is still queued — so a scenario that
+ * emits and exits immediately can lose its own output. writeSync blocks until
+ * the bytes are in the pipe.
+ */
+const out = (s) => {
+  try {
+    writeSync(1, s);
+  } catch {
+    // EPIPE: the parent tore us down mid-write, which is the point of some
+    // of these scenarios.
+  }
+};
+
+const emit = (obj) => out(JSON.stringify(obj) + "\n");
 
 /** The two lines every scenario emits so the test knows the agent is live. */
 const preamble = () => {
@@ -101,11 +116,16 @@ switch (scenario) {
     process.exit(3);
     break;
 
-  // ~24 MB on a single line, over the 16 MB cap.
+  // ~24 MB on a single line, over the 16 MB cap. Written synchronously: with
+  // async writes the parent kills us (correctly) at 16 MB, but `process.exit`
+  // on a timer would drop the rest of the queue first, so on a slow runner
+  // fewer than 16 MB ever reached the parent and the cap never tripped.
+  // Blocking writes make "the parent has seen N bytes" a fact, not a race.
   case "flood": {
     const chunk = " ".repeat(1_000_000);
-    for (let i = 0; i < 24; i++) process.stdout.write(chunk);
-    setTimeout(() => process.exit(0), 5000);
+    for (let i = 0; i < 24; i++) out(chunk);
+    // Stay alive so the parent's teardown is what ends this, not our own exit.
+    setTimeout(() => process.exit(0), 30_000);
     break;
   }
 
