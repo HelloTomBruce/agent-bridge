@@ -193,5 +193,4 @@ case "file_write":
 
 ## [0.1.0]
 
-- Initial extraction from `html-anything`'s `lib/agents/`: `detect` / `invoke` /
-  `parse` over 20 registered agent CLIs.
+- Initial release: `detect` / `invoke` / `parse` over 20 registered agent CLIs.

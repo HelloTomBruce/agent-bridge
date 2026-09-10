@@ -6,8 +6,6 @@
 本地 coding-agent CLI 的统一桥接层：**检测（detect）→ 调用（invoke）→ 协议解析（parse）**。
 零 API key，复用本机已登录的 CLI 会话（claude login、cursor login、gemini auth …）。
 
-从 [html-anything](https://github.com/nexu-io/html-anything) 的 `lib/agents/` 抽出的独立包，API 形状与源码保持一致。
-
 ## 能力
 
 | 模块 | 导出 | 说明 |
@@ -176,34 +174,20 @@ for (;;) {
 }
 ```
 
-## 与 html-anything 的替换步骤
+## 在其他项目里本地联调
 
-已实测完成：三个 API 路由（agents / convert / draft）改用本包，本地 `lib/agents` 源码已删除。
+改动本包后想在真实项目里验证，用 tarball 而不是 `link:`：
 
 ```bash
-# 1. 在 agent-bridge 里产出 tarball（发布前本地引入的标准方式）
 pnpm pack   # → tombruce-agent-bridge-0.2.0.tgz
-
-# 2. 在宿主项目安装（file: 协议 = 真实解包，与 npm 发布后形态一致）
-pnpm add file:../../agent-bridge/tombruce-agent-bridge-0.2.0.tgz
-
-# 3. 替换 import
-#    from "@/lib/agents/invoke"  →  from "@tombruce/agent-bridge"
-#    from "@/lib/agents/detect"  →  from "@tombruce/agent-bridge"
-
-# 4. 验证
-pnpm typecheck && pnpm test && pnpm build
+# 在目标项目里
+pnpm add file:../agent-bridge/tombruce-agent-bridge-0.2.0.tgz
 ```
 
 > ⚠️ **不要用 `pnpm link:` 协议**：Turbopack（Next 16）无法解析指向仓库外的
-> `link:` symlink（`Module not found: Can't resolve`）。tarball 安装（标准
-> `.pnpm` store 布局）无此问题，且更接近真实 npm 安装。
-> 发布到 npm 后，把依赖改为 `"@tombruce/agent-bridge": "^0.2.0"` 即可。
-
-> 导出名与源码完全一致（`AGENTS`、`DEFAULT_MODEL`、`detectAgents`、`resolveOnPath`、
-> `resolveOpenclawAgentId`、`buildArgv`、`envFor`、`makeParser`、`parseLine`、
-> `extractTextFromLine`、`invokeAgent`、`resolveBinForAgent`、`UnsupportedAgentProtocolError`），
-> 切换是纯 import 路径替换，无逻辑改动。
+> `link:` symlink（`Module not found: Can't resolve`）。tarball 安装走标准
+> `.pnpm` store 布局，无此问题，且与 npm 装下来的形态一致——本地能跑就是
+> 真能跑。
 
 ## 开发
 
