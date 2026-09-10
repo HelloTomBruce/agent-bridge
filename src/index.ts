@@ -7,11 +7,12 @@
  *   - parse   : 按 agent 协议解析 stdout（stream-json / ndjson / 纯文本）
  *
  * 零 API key：复用本机已登录 CLI 会话（claude login、cursor login、gemini auth …）。
- * 协议抽象：stdin / argv / argv-message / acp / pi-rpc（后两者仅检测，未实现调用）。
+ * 协议抽象：stdin / argv / argv-message / acp（acp 家族仅检测、未实现调用）。
  */
 
 export type {
   AgentProtocol,
+  AgentTier,
   ModelOption,
   AgentDef,
   DetectedAgent,
@@ -35,5 +36,15 @@ export {
   UnsupportedAgentProtocolError,
 } from "./argv.js";
 
-export type { InvokeOpts, InvokeEvent } from "./invoke.js";
-export { invokeAgent, resolveBinForAgent } from "./invoke.js";
+export type {
+  InvokeOpts,
+  InvokeEvent,
+  InvokeEndStatus,
+  InvokeErrorCode,
+} from "./invoke.js";
+export {
+  invokeAgent,
+  resolveBinForAgent,
+  SIGKILL_GRACE_MS,
+  MAX_STDOUT_BUFFER_BYTES,
+} from "./invoke.js";

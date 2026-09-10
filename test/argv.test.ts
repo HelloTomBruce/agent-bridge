@@ -23,12 +23,13 @@ describe("parseLine opencode", () => {
       },
     });
     expect(parseLine("opencode", line)).toContainEqual({
-      kind: "html",
+      kind: "file_write",
+      path: "/tmp/oc-test/out.html",
       text: "<html><body><h1>rescue</h1></body></html>\n",
     });
   });
 
-  it("does not rescue non-html write targets", () => {
+  it("reports non-html write targets too — extension filtering is the consumer's job", () => {
     const line = JSON.stringify({
       type: "tool_use",
       part: {
@@ -43,7 +44,9 @@ describe("parseLine opencode", () => {
         },
       },
     });
-    expect(parseLine("opencode", line)).toEqual([]);
+    expect(parseLine("opencode", line)).toEqual([
+      { kind: "file_write", path: "/tmp/note.md", text: "# hello" },
+    ]);
   });
 
   it("ignores non-write tools (bash / read)", () => {
@@ -344,7 +347,7 @@ describe("parseLine claude", () => {
     ]);
   });
 
-  it("rescues HTML from a Write tool_use input", () => {
+  it("rescues content from a Write tool_use input, reporting its path", () => {
     const line = JSON.stringify({
       type: "assistant",
       message: {
@@ -360,11 +363,11 @@ describe("parseLine claude", () => {
     });
 
     expect(parseLine("claude", line)).toEqual([
-      { kind: "html", text: "<html><body>real</body></html>" },
+      { kind: "file_write", path: "output.html", text: "<html><body>real</body></html>" },
     ]);
   });
 
-  it("does not rescue non-HTML sidecar files", () => {
+  it("reports .md writes as well — the bridge does not filter by extension", () => {
     const line = JSON.stringify({
       type: "assistant",
       message: {
@@ -378,7 +381,9 @@ describe("parseLine claude", () => {
       },
     });
 
-    expect(parseLine("claude", line)).toEqual([]);
+    expect(parseLine("claude", line)).toEqual([
+      { kind: "file_write", path: "notes.md", text: "# not html" },
+    ]);
   });
 });
 
@@ -406,6 +411,26 @@ describe("parseLine codex / qwen / copilot", () => {
     const line = JSON.stringify({ response: "hello copilot" });
     expect(parseLine("copilot", line)).toEqual([{ kind: "delta", text: "hello copilot" }]);
   });
+
+  it("copilot: falls back to text when response is absent", () => {
+    const line = JSON.stringify({ text: "from text field" });
+    expect(parseLine("copilot", line)).toEqual([{ kind: "delta", text: "from text field" }]);
+  });
+
+  // Regression: both fields were pushed unconditionally, so a line carrying
+  // `response` AND `text` (same payload, as some copilot builds emit) sent the
+  // reply twice. Every other adapter dedupes; this one silently doubled output.
+  it("copilot: does not emit the same text twice when both fields are present", () => {
+    const line = JSON.stringify({ response: "A", text: "A" });
+    expect(parseLine("copilot", line)).toEqual([{ kind: "delta", text: "A" }]);
+  });
+
+  // When they genuinely differ, `response` is the assistant reply and `text`
+  // is an echo/summary field — prefer the former rather than concatenating.
+  it("copilot: prefers response over a differing text field", () => {
+    const line = JSON.stringify({ response: "real reply", text: "echo" });
+    expect(parseLine("copilot", line)).toEqual([{ kind: "delta", text: "real reply" }]);
+  });
 });
 
 describe("parseLine raw text agents", () => {
@@ -425,5 +450,117 @@ describe("extractTextFromLine", () => {
   it("joins deltas only", () => {
     const line = JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "ab" }] } });
     expect(extractTextFromLine("claude", line)).toBe("ab");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pi (@earendil-works/pi-coding-agent). Fixtures below are trimmed from real
+// `pi -p --mode json` output on pi 0.85.1.
+// ---------------------------------------------------------------------------
+describe("parseLine pi", () => {
+  it("extracts text_delta from message_update", () => {
+    const line = JSON.stringify({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "PONG" },
+    });
+    expect(parseLine("pi", line)).toEqual([{ kind: "delta", text: "PONG" }]);
+  });
+
+  it("ignores thinking_delta (reasoning is not output)", () => {
+    const line = JSON.stringify({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "The user" },
+    });
+    expect(parseLine("pi", line)).toEqual([]);
+  });
+
+  it("rescues a write toolcall as file_write with its path", () => {
+    const line = JSON.stringify({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "toolcall_end",
+        contentIndex: 1,
+        toolCall: {
+          type: "toolCall",
+          id: "tool_x",
+          name: "write",
+          arguments: { path: "/tmp/hi.html", content: "<h1>Hi</h1>\n" },
+        },
+      },
+    });
+    expect(parseLine("pi", line)).toEqual([
+      { kind: "file_write", path: "/tmp/hi.html", text: "<h1>Hi</h1>\n" },
+    ]);
+  });
+
+  it("ignores non-write toolcalls (bash / read)", () => {
+    for (const name of ["bash", "read", "edit"]) {
+      const line = JSON.stringify({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "toolcall_end",
+          toolCall: { name, arguments: { path: "/tmp/a.html", content: "<html>x</html>" } },
+        },
+      });
+      expect(parseLine("pi", line)).toEqual([]);
+    }
+  });
+
+  it("reports provider/model and stopReason from message_end", () => {
+    const line = JSON.stringify({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        provider: "kimi-coding",
+        model: "kimi-for-coding-highspeed",
+        stopReason: "stop",
+      },
+    });
+    expect(parseLine("pi", line)).toEqual([
+      { kind: "meta", key: "model", value: "kimi-coding/kimi-for-coding-highspeed" },
+      { kind: "meta", key: "result", value: "stop" },
+    ]);
+  });
+
+  it("normalises turn_end usage into the shared token shape", () => {
+    // pi nests cost under usage.cost.total, unlike the flat field other agents use.
+    const line = JSON.stringify({
+      type: "turn_end",
+      message: {
+        role: "assistant",
+        usage: {
+          input: 9737,
+          output: 22,
+          cacheRead: 15872,
+          cacheWrite: 0,
+          totalTokens: 25631,
+          cost: { input: 0.02, output: 0.004, total: 0.0247 },
+        },
+      },
+    });
+    expect(parseLine("pi", line)).toEqual([
+      {
+        kind: "meta",
+        key: "usage",
+        value: {
+          input_tokens: 9737,
+          output_tokens: 22,
+          cache_read_input_tokens: 15872,
+          cache_creation_input_tokens: 0,
+        },
+      },
+      { kind: "meta", key: "cost_usd", value: 0.0247 },
+    ]);
+  });
+
+  it("treats session / agent_start / agent_settled as noise, not raw", () => {
+    for (const line of [
+      JSON.stringify({ type: "session", version: 3, id: "abc", cwd: "/tmp" }),
+      JSON.stringify({ type: "agent_start" }),
+      JSON.stringify({ type: "turn_start" }),
+      JSON.stringify({ type: "agent_settled" }),
+    ]) {
+      expect(parseLine("pi", line)).toEqual([]);
+    }
   });
 });

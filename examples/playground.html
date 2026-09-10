@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>agent-bridge playground</title>
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#12161b; --line:#1f262e; --line2:#2a333d;
+    --fg:#e6edf3; --dim:#8b98a5; --faint:#5a6673;
+    --ok:#3fb950; --warn:#d29922; --err:#f85149; --info:#58a6ff; --purple:#bc8cff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"PingFang SC",sans-serif;}
+  header{border-bottom:1px solid var(--line);padding:14px 20px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.2px}
+  h1 span{color:var(--faint);font-weight:400}
+  .ver{font:11px var(--mono);color:var(--purple);border:1px solid var(--line2);border-radius:999px;padding:2px 8px}
+  .hint{color:var(--dim);font-size:12px;margin-left:auto}
+  main{display:grid;grid-template-columns:340px 1fr;gap:0;height:calc(100vh - 53px)}
+  @media(max-width:900px){main{grid-template-columns:1fr;height:auto}}
+  aside{border-right:1px solid var(--line);padding:18px;overflow-y:auto}
+  section.out{display:flex;flex-direction:column;min-width:0}
+  label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin:14px 0 5px}
+  label:first-child{margin-top:0}
+  select,textarea,input{width:100%;background:#0d1117;color:var(--fg);border:1px solid var(--line2);
+    border-radius:6px;padding:8px 9px;font-size:13px;font-family:inherit}
+  textarea{font-family:var(--mono);font-size:12px;resize:vertical;min-height:88px}
+  select:focus,textarea:focus,input:focus{outline:none;border-color:var(--info)}
+  .row{display:flex;gap:8px}.row>*{flex:1;min-width:0}
+  button{background:#21262d;color:var(--fg);border:1px solid var(--line2);border-radius:6px;
+    padding:9px 12px;font-size:13px;font-weight:500;cursor:pointer;transition:.12s}
+  button:hover:not(:disabled){background:#2d333b;border-color:#3d444d}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.go{background:#1f6feb;border-color:#1f6feb}button.go:hover:not(:disabled){background:#388bfd}
+  button.stop{background:#8b1a1a;border-color:#a33}button.stop:hover:not(:disabled){background:#a52222}
+  .btns{display:flex;gap:8px;margin-top:16px}
+  .tier{font:10px var(--mono);padding:1px 5px;border-radius:3px;border:1px solid}
+  .t-supported{color:var(--ok);border-color:#1d3a24;background:#0d2312}
+  .t-experimental{color:var(--warn);border-color:#3d3018;background:#241d0d}
+  .t-detect-only{color:var(--faint);border-color:var(--line2);background:#15191e}
+  .agents{margin-top:8px;display:flex;flex-direction:column;gap:3px}
+  .ag{display:flex;align-items:center;gap:7px;font:11px var(--mono);padding:3px 5px;border-radius:4px}
+  .ag.off{opacity:.42}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none}
+  .ag.off .dot{background:var(--faint)}
+  .preset{background:none;border:1px dashed var(--line2);color:var(--dim);font-size:11px;
+    padding:6px 8px;text-align:left;line-height:1.35;width:100%}
+  .preset:hover{color:var(--fg);border-color:var(--info)}
+  .preset b{color:var(--info);font-weight:600}
+  .bar{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);
+    background:var(--panel);flex-wrap:wrap;min-height:44px}
+  .chip{font:11px var(--mono);color:var(--dim);border:1px solid var(--line2);border-radius:4px;padding:2px 7px}
+  .chip b{color:var(--fg);font-weight:600}
+  .status{font:11px var(--mono);font-weight:700;padding:3px 9px;border-radius:4px;border:1px solid}
+  .s-idle{color:var(--faint);border-color:var(--line2)}
+  .s-run{color:var(--info);border-color:#1a3a5c;background:#0d1f33}
+  .s-ok{color:var(--ok);border-color:#1d3a24;background:#0d2312}
+  .s-aborted{color:var(--warn);border-color:#3d3018;background:#241d0d}
+  .s-timeout{color:var(--warn);border-color:#3d3018;background:#241d0d}
+  .s-failed{color:var(--err);border-color:#3d1d1d;background:#2d1214}
+  .panes{display:grid;grid-template-columns:1fr 1fr;flex:1;min-height:0}
+  @media(max-width:900px){.panes{grid-template-columns:1fr;min-height:70vh}}
+  .pane{display:flex;flex-direction:column;min-width:0;min-height:0}
+  .pane+.pane{border-left:1px solid var(--line)}
+  .ph{font:10px var(--mono);text-transform:uppercase;letter-spacing:.7px;color:var(--faint);
+    padding:7px 14px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
+  .ph .n{margin-left:auto;color:var(--dim)}
+  .log,.text{flex:1;overflow-y:auto;padding:10px 14px;font:11.5px/1.6 var(--mono);white-space:pre-wrap;
+    word-break:break-word;min-height:0}
+  .ev{display:flex;gap:8px;padding:1px 0}
+  .ev .t{color:var(--faint);flex:none;font-size:10px;width:44px;text-align:right}
+  .ev .k{flex:none;font-weight:700;width:78px}
+  .ev .v{flex:1;min-width:0;color:var(--dim)}
+  .k-start{color:var(--purple)}.k-delta{color:var(--faint)}.k-file_write{color:var(--purple)}
+  .k-meta{color:var(--info)}.k-stderr{color:var(--warn)}.k-error{color:var(--err)}
+  .k-end{color:var(--ok)}.k-raw{color:var(--faint)}.k-sys{color:var(--faint)}
+  .empty{color:var(--faint);padding:14px;font-size:12px;font-style:italic}
+  .fw{border:1px solid var(--line2);border-radius:6px;margin:8px 0;overflow:hidden}
+  .fw>div:first-child{background:#161b22;padding:5px 9px;font:10px var(--mono);color:var(--purple);
+    border-bottom:1px solid var(--line2);display:flex;gap:8px}
+  .fw>div:first-child i{margin-left:auto;color:var(--faint);font-style:normal}
+  .fw pre{margin:0;padding:8px 9px;font:10.5px/1.5 var(--mono);color:var(--dim);
+    max-height:180px;overflow:auto;white-space:pre-wrap}
+  .note{font-size:11px;color:var(--faint);line-height:1.5;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+  .note code{color:var(--dim);font-size:10.5px}
+</style>
+</head>
+<body>
+<header>
+  <h1>agent-bridge <span>playground</span></h1>
+  <span class="ver" id="ver">0.2.0</span>
+  <span class="hint">本机 CLI 会话直连 · 零 API key · 事件流实时可见</span>
+</header>
+
+<main>
+<aside>
+  <label>Agent</label>
+  <select id="agent"></select>
+  <div class="agents" id="agents"></div>
+
+  <label>Model <span style="text-transform:none;letter-spacing:0">（留空用 CLI 自身配置）</span></label>
+  <select id="model"></select>
+
+  <label>Prompt</label>
+  <textarea id="prompt">用一句话说明什么是 SSE。</textarea>
+
+  <label>快速场景</label>
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <button class="preset" data-p="用一句话说明什么是 SSE。" data-t="0">
+      <b>正常完成</b> → 期望 end status=<b>ok</b>
+    </button>
+    <button class="preset" data-p="从 1 数到 400，每行一个数字，不要省略。" data-t="0" data-cancel="1">
+      <b>取消运行</b> → 2 秒后自动中止，期望 <b>aborted</b>，且进程被真实杀掉
+    </button>
+    <button class="preset" data-p="从 1 数到 400，每行一个数字，不要省略。" data-t="3000">
+      <b>超时</b> → timeoutMs=3000，期望 <b>timeout</b>
+    </button>
+    <button class="preset" data-p="把一首四行小诗写入当前目录的 poem.html 文件，再写一份 notes.md 说明。写完只回复 DONE。" data-t="0">
+      <b>file_write</b> → 期望捕获 .html 与 .md 两个写入
+    </button>
+  </div>
+
+  <label>超时 timeoutMs（0=不限）</label>
+  <input id="timeout" type="number" value="0" min="0" step="1000" />
+
+  <label>工作目录 cwd（留空=服务进程 cwd）</label>
+  <input id="cwd" placeholder="/tmp/ab-play" />
+
+  <div class="btns">
+    <button class="go" id="run">运行</button>
+    <button class="stop" id="stop" disabled>中止</button>
+  </div>
+
+  <div class="note">
+    <b style="color:var(--dim)">这个页面在验证什么</b><br>
+    · <code>end</code> 终态事件区分 ok/aborted/timeout/failed<br>
+    · 关掉标签页 → agent 进程组被杀（0.1.x 会泄漏）<br>
+    · <code>file_write</code> 带 path，不再按扩展名过滤<br>
+    · <code>tier</code> 分档：supported / experimental / detect-only
+  </div>
+</aside>
+
+<section class="out">
+  <div class="bar">
+    <span class="status s-idle" id="status">IDLE</span>
+    <span class="chip">耗时 <b id="ms">—</b></span>
+    <span class="chip">事件 <b id="cnt">0</b></span>
+    <span class="chip">输出 <b id="chars">0</b> 字</span>
+    <span class="chip" id="c-model" style="display:none">model <b></b></span>
+    <span class="chip" id="c-tok" style="display:none">token <b></b></span>
+    <span class="chip" id="c-cost" style="display:none">cost <b></b></span>
+    <span class="chip" id="c-exit" style="display:none">exit <b></b></span>
+  </div>
+  <div class="panes">
+    <div class="pane">
+      <div class="ph">事件流 <span class="n" id="n1"></span></div>
+      <div class="log" id="log"><div class="empty">点「运行」开始…</div></div>
+    </div>
+    <div class="pane">
+      <div class="ph">文本输出 + file_write <span class="n" id="n2"></span></div>
+      <div class="text" id="text"><div class="empty">agent 的 delta 文本与捕获到的文件写入会出现在这里</div></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let AGENTS = [], ctl = null, t0 = 0, timer = null, runId = null, autoCancelAt = 0;
+
+// ---------- agent 列表 ----------
+fetch("/api/agents").then(r => r.json()).then(list => {
+  AGENTS = list;
+  const box = $("agents"), sel = $("agent");
+  const order = { supported: 0, experimental: 1, "detect-only": 2 };
+  list.sort((a, b) => (b.available - a.available) || (order[a.tier] - order[b.tier]) || a.id.localeCompare(b.id));
+  for (const a of list) {
+    const d = document.createElement("div");
+    d.className = "ag" + (a.available ? "" : " off");
+    d.innerHTML = `<span class="dot"></span><span style="flex:1">${a.id}</span>
+      <span class="tier t-${a.tier}">${a.tier}</span>`;
+    d.title = a.available ? (a.path || "") : "未安装 / 不在 PATH";
+    box.appendChild(d);
+    // detect-only 不可调用，放进下拉只会让人踩坑
+    if (a.available && a.tier !== "detect-only") {
+      const o = document.createElement("option");
+      o.value = a.id; o.textContent = `${a.id}  ·  ${a.tier}`;
+      sel.appendChild(o);
+    }
+  }
+  if (!sel.options.length) {
+    sel.innerHTML = "<option>（本机未检测到可调用 agent）</option>";
+    $("run").disabled = true;
+  }
+  syncModels();
+});
+
+$("agent").onchange = syncModels;
+function syncModels() {
+  const a = AGENTS.find(x => x.id === $("agent").value);
+  $("model").innerHTML = "";
+  for (const m of (a?.models ?? [])) {
+    const o = document.createElement("option");
+    // "default" 是「不传 --model」的哨兵值，要转成空串
+    o.value = m.id === "default" ? "" : m.id;
+    o.textContent = m.label;
+    $("model").appendChild(o);
+  }
+}
+
+// ---------- 预设 ----------
+document.querySelectorAll(".preset").forEach(b => b.onclick = () => {
+  $("prompt").value = b.dataset.p;
+  $("timeout").value = b.dataset.t;
+  autoCancelAt = b.dataset.cancel ? 2000 : 0;
+  start();
+});
+
+// ---------- UI ----------
+function setStatus(s) {
+  const el = $("status");
+  el.className = "status s-" + (s === "running" ? "run" : s);
+  el.textContent = s.toUpperCase();
+}
+function chip(id, v) {
+  const el = $(id);
+  if (v == null) { el.style.display = "none"; return; }
+  el.style.display = ""; el.querySelector("b").textContent = v;
+}
+let nEv = 0, nChar = 0;
+function logEv(kind, val) {
+  const log = $("log");
+  if (nEv === 0) log.innerHTML = "";
+  nEv++;
+  const d = document.createElement("div");
+  d.className = "ev";
+  d.innerHTML = `<span class="t">${((Date.now() - t0) / 1000).toFixed(2)}s</span>
+    <span class="k k-${kind}">${kind}</span><span class="v"></span>`;
+  d.querySelector(".v").textContent = val;
+  log.appendChild(d);
+  // 贴底才自动滚，用户上翻查看时不打断
+  if (log.scrollHeight - log.scrollTop - log.clientHeight < 60) log.scrollTop = log.scrollHeight;
+  $("cnt").textContent = nEv; $("n1").textContent = nEv + " 条";
+}
+let textEl = null;
+function appendText(t) {
+  const box = $("text");
+  if (!textEl) { box.innerHTML = ""; textEl = document.createElement("span"); box.appendChild(textEl); }
+  textEl.textContent += t;
+  nChar += t.length;
+  $("chars").textContent = nChar; $("n2").textContent = nChar + " 字";
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < 60) box.scrollTop = box.scrollHeight;
+}
+function addFileWrite(path, text) {
+  const box = $("text");
+  if (!textEl) box.innerHTML = "";
+  const d = document.createElement("div");
+  d.className = "fw";
+  const head = document.createElement("div");
+  head.innerHTML = `<span>📄 file_write</span><i></i>`;
+  head.querySelector("i").textContent = text.length.toLocaleString() + " B";
+  head.insertAdjacentHTML("afterbegin", "");
+  const nameSpan = document.createElement("b");
+  nameSpan.textContent = path || "(无 path)";
+  nameSpan.style.color = "var(--fg)";
+  head.insertBefore(nameSpan, head.querySelector("i"));
+  const pre = document.createElement("pre");
+  pre.textContent = text.length > 4000 ? text.slice(0, 4000) + "\n… 已截断" : text;
+  d.appendChild(head); d.appendChild(pre); box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+  // file_write 之后的 delta 另起一段，不要和文件内容混在一起
+  textEl = null;
+}
+
+// ---------- 运行 ----------
+async function start() {
+  if (ctl) ctl.abort();
+  ctl = new AbortController();
+  runId = Math.random().toString(36).slice(2);
+  nEv = 0; nChar = 0; textEl = null; t0 = Date.now();
+  $("log").innerHTML = ""; $("text").innerHTML = "";
+  $("cnt").textContent = "0"; $("chars").textContent = "0"; $("n1").textContent = ""; $("n2").textContent = "";
+  for (const c of ["c-model", "c-tok", "c-cost", "c-exit"]) chip(c, null);
+  setStatus("running");
+  $("run").disabled = true; $("stop").disabled = false;
+  clearInterval(timer);
+  timer = setInterval(() => $("ms").textContent = ((Date.now() - t0) / 1000).toFixed(1) + "s", 100);
+
+  let cancelTimer = null;
+  if (autoCancelAt) {
+    logEv("sys", `将在 ${autoCancelAt}ms 后自动中止（验证 aborted 与进程清理）`);
+    cancelTimer = setTimeout(() => stop(), autoCancelAt);
+    autoCancelAt = 0;
+  }
+
+  let sawEnd = false;
+  try {
+    const res = await fetch("/api/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        runId,
+        agent: $("agent").value,
+        prompt: $("prompt").value,
+        model: $("model").value,
+        cwd: $("cwd").value.trim(),
+        timeoutMs: Number($("timeout").value) || 0,
+      }),
+      signal: ctl.signal,
+    });
+    if (!res.ok) throw new Error(await res.text());
+
+    // 手写 SSE 解析：EventSource 不支持 POST
+    const rd = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) !== -1) {
+        const block = buf.slice(0, i); buf = buf.slice(i + 2);
+        let ev = "message", data = [];
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) ev = line.slice(6).trim();
+          else if (line.startsWith("data:")) data.push(line.slice(5).trim());
+        }
+        if (!data.length) continue;
+        let d; try { d = JSON.parse(data.join("\n")); } catch { continue; }
+        if (handle(ev, d)) sawEnd = true;
+      }
+    }
+  } catch (e) {
+    if (e.name !== "AbortError") { logEv("error", e.message); setStatus("failed"); }
+  } finally {
+    clearTimeout(cancelTimer);
+    clearInterval(timer);
+    $("ms").textContent = ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    $("run").disabled = false; $("stop").disabled = true;
+    // 没收到 end 就是违反了「恰好一个终态事件」的不变式，必须显眼
+    if (!sawEnd) {
+      logEv("sys", "⚠ 流已关闭但没有收到 end 事件——违反终态不变式");
+      if ($("status").textContent === "RUNNING") setStatus("failed");
+    }
+    ctl = null;
+  }
+}
+
+function handle(ev, d) {
+  switch (d.type) {
+    case "start":
+      logEv("start", `${d.bin}  argv=[${(d.argv || []).join(" ")}]  prompt=${d.promptBytes}B`);
+      return false;
+    case "delta": appendText(d.text); return false;
+    case "file_write":
+      logEv("file_write", `path=${d.path || "(空)"}  ${d.text.length}B`);
+      addFileWrite(d.path, d.text);
+      return false;
+    case "meta": {
+      logEv("meta", `${d.key} = ${typeof d.value === "object" ? JSON.stringify(d.value) : d.value}`);
+      if (d.key === "model") chip("c-model", d.value);
+      if (d.key === "cost_usd") chip("c-cost", "$" + Number(d.value).toFixed(4));
+      if (d.key === "usage" && d.value) {
+        const u = d.value;
+        chip("c-tok", `${u.input_tokens ?? "?"}in / ${u.output_tokens ?? "?"}out`);
+      }
+      return false;
+    }
+    case "stderr": logEv("stderr", d.text.trim().slice(0, 300)); return false;
+    case "raw": logEv("raw", d.text.slice(0, 200)); return false;
+    case "error": logEv("error", d.message); return false;
+    case "end":
+      logEv("end", `status=${d.status}  code=${d.code}`);
+      setStatus(d.status);
+      chip("c-exit", d.code === null ? "null" : d.code);
+      return true;   // 终态
+    default:
+      logEv("sys", `未知事件 ${JSON.stringify(d).slice(0, 160)}`);
+      return false;
+  }
+}
+
+async function stop() {
+  // 走服务端 abort：这样 invokeAgent 能发出 end{aborted} 再收流。
+  // 直接 ctl.abort() 会切断连接，浏览器就看不到终态事件了。
+  if (runId) await fetch("/api/stop", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ runId }),
+  }).catch(() => {});
+}
+$("run").onclick = () => { autoCancelAt = 0; start(); };
+$("stop").onclick = stop;
+</script>
+</body>
+</html>

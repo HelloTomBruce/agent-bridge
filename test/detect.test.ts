@@ -6,7 +6,15 @@ import { resolveOnPath, detectAgents, AGENTS, DEFAULT_MODEL } from "../src/detec
 
 let dir: string;
 let oldPath: string | undefined;
-let oldEnvOverrides: Record<string, string | undefined> = {};
+/**
+ * Saved `*_BIN` overrides, restored in afterAll.
+ *
+ * Detection reads `process.env[def.envOverride]` before scanning PATH, so a
+ * developer who has e.g. `QWEN_BIN` exported sees "qwen is available" and the
+ * missing-agent assertion fails on their machine but not in CI. Clearing every
+ * override up front makes these tests depend only on the temp PATH.
+ */
+const oldEnvOverrides: Record<string, string | undefined> = {};
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "agent-bridge-test-"));
@@ -15,6 +23,11 @@ beforeAll(() => {
   chmodSync(fakeBin, 0o755);
   oldPath = process.env.PATH;
   process.env.PATH = dir;
+  for (const a of AGENTS) {
+    if (!a.envOverride) continue;
+    oldEnvOverrides[a.envOverride] = process.env[a.envOverride];
+    delete process.env[a.envOverride];
+  }
   // Pin the toolchain dirs away from the real machine so detection is
   // deterministic: set VP_HOME to the temp dir (its <VP_HOME>/bin is probed).
   process.env.VP_HOME = dir;
@@ -23,6 +36,10 @@ beforeAll(() => {
 afterAll(() => {
   process.env.PATH = oldPath;
   delete process.env.VP_HOME;
+  for (const [key, value] of Object.entries(oldEnvOverrides)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -62,7 +79,7 @@ describe("detectAgents", () => {
     }
   });
 
-  it("marks acp / pi-rpc agents unsupported but detected when installed", () => {
+  it("marks acp agents unsupported but detected when installed", () => {
     const hermesBin = join(dir, "hermes");
     writeFileSync(hermesBin, "#!/bin/sh\necho hi\n");
     chmodSync(hermesBin, 0o755);

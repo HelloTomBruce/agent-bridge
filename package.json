@@ -1,7 +1,26 @@
 {
   "name": "agent-bridge",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "本地 coding-agent CLI 的统一桥接层：检测（detect）、调用（invoke）、协议解析（parse）。零 API key，复用本机已登录 CLI 会话。",
+  "keywords": [
+    "agent",
+    "cli",
+    "bridge",
+    "claude",
+    "codex",
+    "gemini",
+    "cursor",
+    "llm"
+  ],
+  "homepage": "https://github.com/HelloTomBruce/agent-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/HelloTomBruce/agent-bridge/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HelloTomBruce/agent-bridge.git"
+  },
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,27 +34,27 @@
       "import": "./dist/server.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@11.18.0",
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "playground": "node examples/server.mjs"
   },
-  "keywords": [
-    "agent",
-    "cli",
-    "bridge",
-    "claude",
-    "codex",
-    "gemini",
-    "cursor",
-    "llm"
-  ],
-  "license": "MIT",
   "devDependencies": {
     "@types/node": "^20",
     "typescript": "^5",

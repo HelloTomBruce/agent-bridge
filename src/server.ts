@@ -42,21 +42,34 @@ export function toSseStream(
           /* already closed */
         }
       };
+      // Cancel the upstream `invokeAgent` stream so it tears down the agent
+      // process tree. Must work even before `getReader()` has run: cancelling
+      // the stream itself is equivalent and avoids leaking the child on the
+      // already-aborted path.
       const cancelUpstream = () => {
-        reader?.cancel().catch(() => {
+        const p = reader ? reader.cancel() : stream.cancel();
+        p.catch(() => {
           /* upstream already finished */
         });
       };
 
+      const onAbort = () => {
+        cancelUpstream();
+        close();
+      };
+      const detachAbort = () => {
+        opts.signal?.removeEventListener("abort", onAbort);
+      };
+
       if (opts.signal) {
         if (opts.signal.aborted) {
-          close();
+          // Pre-aborted: the child may already be spawning, so cancel upstream
+          // rather than just closing our own output. Closing alone left the
+          // agent running to completion — the same P0 leak `cancel()` fixes.
+          onAbort();
           return;
         }
-        opts.signal.addEventListener("abort", () => {
-          cancelUpstream();
-          close();
-        }, { once: true });
+        opts.signal.addEventListener("abort", onAbort, { once: true });
       }
 
       reader = stream.getReader();
@@ -72,12 +85,16 @@ export function toSseStream(
           message: err instanceof Error ? err.message : String(err),
         });
       } finally {
+        // Long-lived signals (a shared request-scoped controller) would
+        // otherwise accumulate one listener per stream.
+        detachAbort();
         close();
       }
     },
     cancel() {
-      // 下游断开（客户端关闭连接 / Response 被取消）→ 杀掉子进程
-      reader?.cancel().catch(() => {});
+      // 下游断开（客户端关闭连接 / Response 被取消）→ 杀掉子进程。
+      // 与 cancelUpstream 同理：reader 可能尚未取到，此时直接取消上游流。
+      (reader ? reader.cancel() : stream.cancel()).catch(() => {});
     },
   });
 }

@@ -16,7 +16,7 @@ function makeStream(events: InvokeEvent[] | (() => AsyncGenerator<InvokeEvent>))
       else controller.enqueue(value);
     },
     cancel() {
-      gen.return?.();
+      gen.return?.(undefined as never);
     },
   });
 }
@@ -32,26 +32,24 @@ async function collectSse(stream: ReadableStream<Uint8Array>): Promise<string> {
   return out;
 }
 
-const sseHeaders = ["Content-Type: text/event-stream; charset=utf-8", "Cache-Control: no-cache, no-transform"];
-
 describe("toSseStream", () => {
   it("encodes every event type as event: <type> + data JSON frame", async () => {
     const events: InvokeEvent[] = [
       { type: "start", bin: "/usr/bin/claude", argv: ["-p"], promptBytes: 12 },
       { type: "delta", text: "hello" },
       { type: "meta", key: "session", value: "ses_123" },
-      { type: "html", text: "<html></html>" },
+      { type: "file_write", path: "out.html", text: "<html></html>" },
       { type: "stderr", text: "warn" },
       { type: "raw", text: "…" },
-      { type: "done", code: 0 },
+      { type: "end", status: "ok", code: 0 },
     ];
     const out = await collectSse(toSseStream(makeStream(events)));
     expect(out).toContain('event: start\ndata: {"type":"start","bin":"/usr/bin/claude","argv":["-p"],"promptBytes":12}\n\n');
     expect(out).toContain('event: delta\ndata: {"type":"delta","text":"hello"}\n\n');
     expect(out).toContain('event: meta\ndata: {"type":"meta","key":"session","value":"ses_123"}\n\n');
-    expect(out).toContain('event: html\ndata: {"type":"html","text":"<html></html>"}\n\n');
+    expect(out).toContain('event: file_write\ndata: {"type":"file_write","path":"out.html","text":"<html></html>"}\n\n');
     expect(out).toContain('event: stderr\ndata: {"type":"stderr","text":"warn"}\n\n');
-    expect(out).toContain('event: done\ndata: {"type":"done","code":0}\n\n');
+    expect(out).toContain('event: end\ndata: {"type":"end","status":"ok","code":0}\n\n');
   });
 
   it("emits an error frame when the upstream stream throws", async () => {
@@ -88,6 +86,28 @@ describe("toSseStream", () => {
     expect(out).toBe("");
   });
 
+  // Regression: the pre-aborted branch used to `close()` and return *before*
+  // `getReader()` ran, so the upstream was never cancelled. With invokeAgent
+  // upstream that means the spawned agent kept running to completion — the
+  // exact P0 leak that `cancel()` was added to fix, reintroduced through the
+  // signal path.
+  it("cancels upstream (not just its own output) when pre-aborted", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<InvokeEvent>({
+      start(controller) {
+        controller.enqueue({ type: "delta", text: "a" });
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const ctl = new AbortController();
+    ctl.abort();
+    const out = await collectSse(toSseStream(stream, { signal: ctl.signal }));
+    expect(out).toBe("");
+    expect(cancelled).toBe(true);
+  });
+
   it("closes output and cancels upstream when signal aborts mid-stream", async () => {
     let cancelled = false;
     const stream = new ReadableStream<InvokeEvent>({
@@ -114,14 +134,14 @@ describe("toSseStream", () => {
   });
 
   it("works as a Response body with SSE headers (integration shape)", async () => {
-    const res = new Response(toSseStream(makeStream([{ type: "done", code: 0 }])), {
+    const res = new Response(toSseStream(makeStream([{ type: "end", status: "ok", code: 0 }])), {
       headers: {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache, no-transform",
       },
     });
-    expect(res.headers.get("Content-Type")).toBe(sseHeaders[0].split(": ")[1]);
+    expect(res.headers.get("Content-Type")).toBe("text/event-stream; charset=utf-8");
     const text = await res.text();
-    expect(text).toContain('event: done');
+    expect(text).toContain('event: end');
   });
 });

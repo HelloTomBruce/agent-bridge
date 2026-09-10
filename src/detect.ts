@@ -14,9 +14,25 @@ import path, { delimiter, join } from "node:path";
  *                      Not implemented — surfaced in detection so the user sees
  *                      install instructions, but invoke emits a clear error
  *                      pointing them to a supported agent.
- *   - "pi-rpc"       : pi's custom JSON-RPC mode. Same status as "acp".
  */
-export type AgentProtocol = "stdin" | "argv" | "argv-message" | "acp" | "pi-rpc";
+export type AgentProtocol = "stdin" | "argv" | "argv-message" | "acp";
+
+/**
+ * Support tier. Encodes how much verification an adapter has actually had, so
+ * consumers can decide what to expose in a picker rather than discovering the
+ * difference at runtime.
+ *
+ *  - "supported"    : output protocol verified against real CLI output;
+ *                     text/usage/file-write parsing exercised by tests.
+ *  - "experimental" : invocation wired up, parsing best-effort. May break when
+ *                     the upstream CLI changes its output format.
+ *  - "detect-only"  : detected for install hints, but `invokeAgent` rejects it
+ *                     (protocol not implemented — see AgentProtocol).
+ *
+ * Kept separate from `protocol`: protocol says HOW to talk, tier says how much
+ * to trust it.
+ */
+export type AgentTier = "supported" | "experimental" | "detect-only";
 
 export type ModelOption = { id: string; label: string };
 
@@ -32,6 +48,8 @@ export type AgentDef = {
   vendor: string;
   /** Defaults to "stdin" when omitted. */
   protocol?: AgentProtocol;
+  /** Defaults to "experimental" when omitted — opt in to "supported" explicitly. */
+  tier?: AgentTier;
   /**
    * Curated, evidence-based model list shown in pickers. Always begins with
    * `DEFAULT_MODEL` (= no `--model` flag → user's CLI config wins).
@@ -46,6 +64,7 @@ export const AGENTS: AgentDef[] = [
   // first-class entry below so users on machines that have both can pick.
   {
     id: "claude",
+    tier: "supported",
     label: "Claude Code",
     bin: "claude",
     fallbackBins: ["openclaude"],
@@ -53,12 +72,11 @@ export const AGENTS: AgentDef[] = [
     vendor: "Anthropic",
     fallbackModels: [
       DEFAULT_MODEL,
+      // Aliases only: the CLI resolves these to whatever is current, so they
+      // do not rot the way pinned ids (claude-opus-4-7, …) did.
       { id: "sonnet", label: "Sonnet (alias)" },
       { id: "opus", label: "Opus (alias)" },
       { id: "haiku", label: "Haiku (alias)" },
-      { id: "claude-opus-4-7", label: "claude-opus-4-7" },
-      { id: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
-      { id: "claude-haiku-4-5", label: "claude-haiku-4-5" },
     ],
   },
   {
@@ -74,31 +92,31 @@ export const AGENTS: AgentDef[] = [
     protocol: "argv-message",
     fallbackModels: [
       DEFAULT_MODEL,
-      { id: "openrouter/anthropic/claude-opus-4.7", label: "Opus 4.7 (OpenRouter)" },
-      { id: "openrouter/anthropic/claude-sonnet-4.6", label: "Sonnet 4.6 (OpenRouter)" },
-      { id: "openrouter/anthropic/claude-haiku-4.5", label: "Haiku 4.5 (OpenRouter)" },
+      // OpenRouter ids carry upstream point versions and rot quickly; pass
+      // `model` explicitly, e.g. "openrouter/anthropic/claude-sonnet-4.6".
     ],
   },
   {
     id: "codex",
+    tier: "supported",
     label: "OpenAI Codex",
     bin: "codex",
     envOverride: "CODEX_BIN",
     vendor: "OpenAI",
     fallbackModels: [
       DEFAULT_MODEL,
-      { id: "gpt-5.5", label: "gpt-5.5" },
-      { id: "gpt-5.4", label: "gpt-5.4" },
-      { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
-      { id: "gpt-5.3-codex", label: "gpt-5.3-codex" },
-      { id: "gpt-5-codex", label: "gpt-5-codex" },
       { id: "gpt-5", label: "gpt-5" },
+      { id: "gpt-5-codex", label: "gpt-5-codex" },
       { id: "o3", label: "o3" },
       { id: "o4-mini", label: "o4-mini" },
     ],
   },
   {
     id: "cursor-agent",
+    // Shares claude's stream_event shape (see parseLineWithState), but that
+    // was inferred, not confirmed against a real capture — so it stays
+    // experimental. Promotion criteria: docs/TIER.md.
+    tier: "experimental",
     label: "Cursor Agent",
     bin: "cursor-agent",
     envOverride: "CURSOR_AGENT_BIN",
@@ -106,13 +124,13 @@ export const AGENTS: AgentDef[] = [
     fallbackModels: [
       DEFAULT_MODEL,
       { id: "auto", label: "auto" },
-      { id: "sonnet-4", label: "sonnet-4" },
-      { id: "sonnet-4-thinking", label: "sonnet-4-thinking" },
       { id: "gpt-5", label: "gpt-5" },
     ],
   },
   {
     id: "gemini",
+    // Same branch as cursor-agent, same reason for staying experimental.
+    tier: "experimental",
     label: "Gemini CLI",
     bin: "gemini",
     envOverride: "GEMINI_BIN",
@@ -125,14 +143,15 @@ export const AGENTS: AgentDef[] = [
   },
   {
     id: "copilot",
+    tier: "supported",
     label: "GitHub Copilot CLI",
     bin: "copilot",
     envOverride: "COPILOT_BIN",
     vendor: "GitHub",
     fallbackModels: [
       DEFAULT_MODEL,
-      { id: "claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
-      { id: "gpt-5.2", label: "GPT-5.2" },
+      // Copilot rotates its backing models without stable aliases, so only
+      // DEFAULT_MODEL is offered; pass `model` explicitly to override.
     ],
   },
   {
@@ -145,6 +164,7 @@ export const AGENTS: AgentDef[] = [
   },
   {
     id: "opencode",
+    tier: "supported",
     label: "OpenCode",
     bin: "opencode-cli",
     fallbackBins: ["opencode"],
@@ -235,8 +255,8 @@ export const AGENTS: AgentDef[] = [
     protocol: "acp",
     fallbackModels: [
       DEFAULT_MODEL,
-      { id: "openai-codex:gpt-5.5", label: "gpt-5.5 (openai-codex)" },
-      { id: "openai-codex:gpt-5.4", label: "gpt-5.4 (openai-codex)" },
+      // detect-only: invokeAgent rejects it, so a model list would only be
+      // decoration that still has to be maintained.
     ],
   },
   {
@@ -248,9 +268,7 @@ export const AGENTS: AgentDef[] = [
     protocol: "acp",
     fallbackModels: [
       DEFAULT_MODEL,
-      { id: "kimi-k2-turbo-preview", label: "kimi-k2-turbo-preview" },
-      { id: "moonshot-v1-8k", label: "moonshot-v1-8k" },
-      { id: "moonshot-v1-32k", label: "moonshot-v1-32k" },
+      // detect-only — see hermes.
     ],
   },
   {
@@ -262,13 +280,7 @@ export const AGENTS: AgentDef[] = [
     protocol: "acp",
     fallbackModels: [
       DEFAULT_MODEL,
-      { id: "adaptive", label: "adaptive" },
-      { id: "swe", label: "swe" },
-      { id: "opus", label: "opus" },
-      { id: "sonnet", label: "sonnet" },
-      { id: "codex", label: "codex" },
-      { id: "gpt", label: "gpt" },
-      { id: "gemini", label: "gemini" },
+      // detect-only — see hermes.
     ],
   },
   {
@@ -303,15 +315,16 @@ export const AGENTS: AgentDef[] = [
     label: "Pi",
     bin: "pi",
     envOverride: "PI_BIN",
-    vendor: "Inflection",
-    protocol: "pi-rpc",
-    fallbackModels: [
-      DEFAULT_MODEL,
-      { id: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
-      { id: "anthropic/claude-opus-4-5", label: "Claude Opus 4.5" },
-      { id: "openai/gpt-5", label: "GPT-5" },
-      { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-    ],
+    // Not Inflection's consumer "Pi" — this is @earendil-works/pi-coding-agent,
+    // a local coding agent with read/bash/edit/write tools. Verified against
+    // pi 0.85.1: `-p --mode json` emits ndjson and takes the prompt as a
+    // positional arg, so it's an ordinary `argv` agent.
+    vendor: "earendil-works",
+    protocol: "argv",
+    tier: "supported",
+    // pi resolves models through its own provider catalog (`pi --list-models`),
+    // which is per-install and per-auth, so only DEFAULT_MODEL is offered.
+    fallbackModels: [DEFAULT_MODEL],
   },
 ];
 
@@ -444,12 +457,14 @@ export type DetectedAgent = {
   path?: string;
   resolvedBin?: string;
   protocol: AgentProtocol;
+  /** See `AgentTier` — lets pickers separate verified adapters from the rest. */
+  tier: AgentTier;
   /**
    * Curated model picker list. Sent to clients so pickers can render a
    * dropdown without a follow-up round trip.
    */
   models: ModelOption[];
-  /** True when the adapter cannot be invoked yet (acp / pi-rpc). */
+  /** True when the adapter cannot be invoked yet (acp). */
   unsupported?: boolean;
 };
 
@@ -462,12 +477,16 @@ export type DetectedAgent = {
 export function detectAgents(env: NodeJS.ProcessEnv = process.env): DetectedAgent[] {
   return AGENTS.map((a): DetectedAgent => {
     const protocol = a.protocol ?? "stdin";
-    const unsupported = protocol === "acp" || protocol === "pi-rpc";
+    const unsupported = protocol === "acp";
+    // A detect-only protocol always wins over any declared tier — it cannot be
+    // invoked no matter how well its output is understood.
+    const tier: AgentTier = unsupported ? "detect-only" : (a.tier ?? "experimental");
     const base = {
       id: a.id,
       label: a.label,
       vendor: a.vendor,
       protocol,
+      tier,
       models: a.fallbackModels,
       unsupported: unsupported || undefined,
     };

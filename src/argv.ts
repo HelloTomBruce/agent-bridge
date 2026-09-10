@@ -138,7 +138,19 @@ export function buildArgv(agent: string, _opts: AgentArgvOpts = {}): string[] {
     case "vibe":
       throw new UnsupportedAgentProtocolError(agent, "ACP JSON-RPC");
     case "pi":
-      throw new UnsupportedAgentProtocolError(agent, "pi-rpc");
+      // @earendil-works/pi-coding-agent — verified against pi 0.85.1.
+      // Non-interactive "print" mode + ndjson output. Prompt arrives as a
+      // positional arg (argv protocol). No session file, trust project-local
+      // files, skip context files to avoid reading AGENTS.md/CLAUDE.md.
+      return [
+        "-p",
+        "--mode",
+        "json",
+        "--no-session",
+        "--approve",
+        "--no-context-files",
+        ...(model ? ["--model", model] : []),
+      ];
     default:
       throw new Error(`unknown agent: ${agent}`);
   }
@@ -154,12 +166,21 @@ export type AgentParse =
   | { kind: "delta"; text: string }
   | { kind: "meta"; key: string; value: unknown }
   /**
-   * Canonical HTML rescued from a file-write tool call (e.g. Claude's `Write`
-   * tool). Replaces any previously streamed text — the preamble like
-   * "I'll save it as output.html\n已输出至 …" is junk; the tool's input is the
-   * real HTML. Downstream calls `setHtmlFor`, not `appendHtmlFor`.
+   * Content recovered from a file-write tool call (Claude's `Write`,
+   * opencode's `write`, …). Agents frequently ignore "stream the document
+   * inline" instructions and dump the artifact into a file, leaving only a
+   * chatty confirmation ("saved to out.html") in the assistant text — without
+   * this rescue the real payload would be lost.
+   *
+   * `path` is reported verbatim (may be empty if the tool call omitted it) so
+   * consumers can filter by extension themselves. The bridge deliberately does
+   * NOT filter: deciding that only `.html` matters is application policy, not
+   * protocol.
+   *
+   * Semantics are REPLACE, not append — the tool input is authoritative for
+   * that file.
    */
-  | { kind: "html"; text: string }
+  | { kind: "file_write"; path: string; text: string }
   | { kind: "noise" };
 
 /**
@@ -198,14 +219,6 @@ export function parseLine(agent: string, line: string): AgentParse[] {
   return parseLineWithState(agent, line, {});
 }
 
-/**
- * Some agents (Claude + bypassPermissions, qoder, …) ignore the "stream HTML
- * inline" prompt and decide to dump the document into a file via the `Write`
- * tool, leaving the assistant text as just a confirmation ("已输出至 …").
- * Rescue the HTML from the tool_use input so the preview still gets the real
- * content. Returns an empty string if no Write/create_file tool_use was found
- * or its input has no usable content field.
- */
 /** Tool names treated as file-write operations across agent protocols. */
 const WRITE_TOOL_NAMES = new Set([
   "write",
@@ -216,22 +229,27 @@ const WRITE_TOOL_NAMES = new Set([
   "filewrite",
 ]);
 
-function rescueHtmlFromToolUse(
+/**
+ * Extract every file-write tool call from an Anthropic-shaped `content` array.
+ * Returns one entry per write so a turn that writes several files reports all
+ * of them — the old HTML-only version concatenated them into a single blob,
+ * which silently corrupted multi-file turns.
+ *
+ * `path` is preserved as-written (not lowercased) since consumers may display
+ * it; matching against WRITE_TOOL_NAMES is case-insensitive.
+ */
+function rescueFileWrites(
   content: Array<{ type?: string; name?: string; input?: unknown }> | undefined,
-): string {
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
+): Array<{ path: string; text: string }> {
+  if (!Array.isArray(content)) return [];
+  const writes: Array<{ path: string; text: string }> = [];
   for (const block of content) {
     if (!block || block.type !== "tool_use") continue;
     const name = (block.name ?? "").toLowerCase();
-    // Match the common file-write tool names across agents.
     if (!WRITE_TOOL_NAMES.has(name)) continue;
     const input = block.input as Record<string, unknown> | undefined;
     if (!input || typeof input !== "object") continue;
-    const path = String(input.file_path ?? input.path ?? input.filename ?? "").toLowerCase();
-    // Only rescue HTML-ish targets — never grab content for a .md / .txt
-    // sidecar the agent might also be writing.
-    if (path && !/\.(html?|htm)$/.test(path)) continue;
+    const path = String(input.file_path ?? input.path ?? input.filename ?? "");
     const text =
       typeof input.content === "string"
         ? input.content
@@ -240,9 +258,9 @@ function rescueHtmlFromToolUse(
           : typeof input.file_content === "string"
             ? input.file_content
             : "";
-    if (text) parts.push(text);
+    if (text) writes.push({ path, text });
   }
-  return parts.join("");
+  return writes;
 }
 
 function parseLineWithState(agent: string, line: string, state: ParseState): AgentParse[] {
@@ -290,9 +308,9 @@ function parseLineWithState(agent: string, line: string, state: ParseState): Age
         usage?: Record<string, number>;
         model?: string;
       };
-      const toolHtml = rescueHtmlFromToolUse(msg.content);
-      if (toolHtml) {
-        out.push({ kind: "html", text: toolHtml });
+      const fileWrites = rescueFileWrites(msg.content);
+      if (fileWrites.length) {
+        for (const w of fileWrites) out.push({ kind: "file_write", path: w.path, text: w.text });
         // suppress the chatty assistant text fallback below; the Write input
         // is authoritative for this turn.
         state.sawStreamEventText = true;
@@ -315,6 +333,64 @@ function parseLineWithState(agent: string, line: string, state: ParseState): Age
     if (obj.type === "rate_limit_event" && obj.rate_limit_info) {
       out.push({ kind: "meta", key: "rate_limit", value: obj.rate_limit_info });
     }
+  }
+
+  if (agent === "pi") {
+    // pi emits ndjson events. Parse the ones that carry content.
+    if (obj.type === "message_update") {
+      const ev = obj.assistantMessageEvent as Record<string, unknown> | undefined;
+      if (!ev || typeof ev !== "object") return out;
+      switch (ev.type) {
+        case "text_delta":
+          if (typeof ev.delta === "string") out.push({ kind: "delta", text: ev.delta });
+          break;
+        case "toolcall_end": {
+          const tc = (ev.toolCall ?? ev.tool_call) as Record<string, unknown> | undefined;
+          if (tc) {
+            const name = String(tc.name ?? "").toLowerCase();
+            if (WRITE_TOOL_NAMES.has(name)) {
+              const args = tc.arguments as Record<string, unknown> | undefined;
+              if (args) {
+                const path = String(args.path ?? args.file_path ?? "");
+                const text = String(args.content ?? args.text ?? "");
+                if (text.trim()) out.push({ kind: "file_write", path, text });
+              }
+            }
+          }
+          break;
+        }
+      }
+    }
+    if (obj.type === "message_end") {
+      const msg = obj.message as Record<string, unknown> | undefined;
+      if (msg?.role === "assistant") {
+        if (msg.provider && msg.model)
+          out.push({ kind: "meta", key: "model", value: `${msg.provider}/${msg.model}` });
+        if (msg.stopReason) out.push({ kind: "meta", key: "result", value: msg.stopReason });
+      }
+    }
+    if (obj.type === "turn_end") {
+      const msg = obj.message as Record<string, unknown> | undefined;
+      if (msg?.usage && typeof msg.usage === "object") {
+        const u = msg.usage as Record<string, number>;
+        out.push({
+          kind: "meta",
+          key: "usage",
+          value: {
+            input_tokens: u.input ?? 0,
+            output_tokens: u.output ?? 0,
+            cache_read_input_tokens: u.cacheRead ?? 0,
+            cache_creation_input_tokens: u.cacheWrite ?? 0,
+          },
+        });
+        if (typeof u.cost === "number") out.push({ kind: "meta", key: "cost_usd", value: u.cost });
+        else if (typeof u.cost === "object") {
+          const c = u.cost as Record<string, number>;
+          if (typeof c.total === "number") out.push({ kind: "meta", key: "cost_usd", value: c.total });
+        }
+      }
+    }
+    return out;
   }
 
   if (agent === "codex") {
@@ -355,9 +431,9 @@ function parseLineWithState(agent: string, line: string, state: ParseState): Age
     }
     if (obj.type === "assistant" && obj.message && typeof obj.message === "object") {
       const msg = obj.message as { content?: Array<{ type?: string; text?: string; name?: string; input?: unknown }> };
-      const toolHtml = rescueHtmlFromToolUse(msg.content);
-      if (toolHtml) {
-        out.push({ kind: "html", text: toolHtml });
+      const fileWrites = rescueFileWrites(msg.content);
+      if (fileWrites.length) {
+        for (const w of fileWrites) out.push({ kind: "file_write", path: w.path, text: w.text });
         state.sawStreamEventText = true;
       }
       if (!state.sawStreamEventText) {
@@ -378,8 +454,16 @@ function parseLineWithState(agent: string, line: string, state: ParseState): Age
   }
 
   if (agent === "copilot") {
-    if (typeof obj.response === "string") out.push({ kind: "delta", text: obj.response });
-    if (typeof obj.text === "string") out.push({ kind: "delta", text: obj.text });
+    // Some builds emit `response` and `text` on the same line carrying the
+    // identical payload. Pushing both duplicated the whole reply, so pick one:
+    // `response` is the assistant message, `text` is the fallback/echo field.
+    const text =
+      typeof obj.response === "string"
+        ? obj.response
+        : typeof obj.text === "string"
+          ? obj.text
+          : "";
+    if (text) out.push({ kind: "delta", text });
   }
 
   if (agent === "opencode") {
@@ -392,11 +476,11 @@ function parseLineWithState(agent: string, line: string, state: ParseState): Age
     );
     if (text) out.push({ kind: "delta", text });
 
-    // Rescue canonical HTML from a completed `write` tool call. opencode
-    // streams tool input under `part.state.input` (not `part.input`), and the
-    // model often prefers Write over streaming the document inline — without
-    // this the generated HTML would be lost entirely (only the trailing
-    // "Done. out.html written…" text arrives as a delta).
+    // Rescue content from a completed `write` tool call. opencode streams tool
+    // input under `part.state.input` (not `part.input`), and the model often
+    // prefers Write over streaming the document inline — without this the
+    // artifact would be lost entirely (only the trailing "Done. out.html
+    // written…" text arrives as a delta).
     const toolState = part?.state && typeof part.state === "object"
       ? (part.state as { status?: string; input?: Record<string, unknown> })
       : null;
@@ -404,18 +488,14 @@ function parseLineWithState(agent: string, line: string, state: ParseState): Age
       const tool = String(part?.tool ?? "").toLowerCase();
       if (WRITE_TOOL_NAMES.has(tool)) {
         const input = toolState.input ?? {};
-        const filePath = String(input.filePath ?? input.path ?? "").toLowerCase();
-        // Only rescue HTML-ish targets — never grab content for a .md / .txt
-        // sidecar the agent might also be writing.
-        if (!filePath || /\.(html?|htm)$/.test(filePath)) {
-          const content =
-            typeof input.content === "string"
-              ? input.content
-              : typeof input.text === "string"
-                ? input.text
-                : "";
-          if (content.trim()) out.push({ kind: "html", text: content });
-        }
+        const filePath = String(input.filePath ?? input.path ?? "");
+        const content =
+          typeof input.content === "string"
+            ? input.content
+            : typeof input.text === "string"
+              ? input.text
+              : "";
+        if (content.trim()) out.push({ kind: "file_write", path: filePath, text: content });
       }
     }
     if (obj.type === "step_start" && typeof obj.sessionID === "string") {
@@ -480,9 +560,9 @@ function parseLineWithState(agent: string, line: string, state: ParseState): Age
     }
     if (obj.type === "assistant" && obj.message && typeof obj.message === "object") {
       const msg = obj.message as { content?: Array<{ type?: string; text?: string; name?: string; input?: unknown }> };
-      const toolHtml = rescueHtmlFromToolUse(msg.content);
-      if (toolHtml) {
-        out.push({ kind: "html", text: toolHtml });
+      const fileWrites = rescueFileWrites(msg.content);
+      if (fileWrites.length) {
+        for (const w of fileWrites) out.push({ kind: "file_write", path: w.path, text: w.text });
         state.sawStreamEventText = true;
       }
       if (!state.sawStreamEventText) {
