@@ -252,11 +252,17 @@ posixOnly("process lifetime — no orphan leaks", () => {
 
   it("abort kills the whole process group, not just the npm shim", async () => {
     const marker = join(markerDir, "abort-grandchild-leak.txt");
+    // Fork the grandchild BEFORE announcing readiness. PREAMBLE's delta is
+    // what the test waits on, so emitting it first left a window where abort
+    // could land before the grandchild existed — then nothing survives the
+    // kill and the test passes for the wrong reason, or the fork races the
+    // signal and it fails. Ordering the fork first makes "saw a delta" mean
+    // "the grandchild is running", which is the precondition under test.
     const bin = writeFakeBin("fake-grandchild", [
-      ...PREAMBLE,
       // Mimic an npm shim: the real agent is a grandchild. Signalling only the
       // direct child would leave this running.
       `sh -c 'sleep 2; echo leaked > "${marker}"' &`,
+      ...PREAMBLE,
       "wait",
     ]);
 

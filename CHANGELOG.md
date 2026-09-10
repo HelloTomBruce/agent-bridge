@@ -12,6 +12,14 @@ correctness.
 
 ### Fixed
 
+- **Flaky process-group test.** `abort kills the whole process group` emitted
+  its readiness delta before forking the grandchild, so `abort()` could land in
+  the gap — failing when the fork raced the signal, and passing for the wrong
+  reason when nothing had spawned yet. The fork now precedes the delta, so
+  "saw a delta" actually means "the grandchild is running". Surfaced by a
+  one-in-nine CI job; verified by re-running the job and by 5 consecutive
+  local runs, plus a sabotage check confirming the test still fails when
+  teardown is reduced to the direct child.
 - **`detect` tests failed on Windows.** The fixtures were extension-less files,
   but Windows only executes what PATHEXT lists and `resolveOnPath` honours
   that — so the lookup correctly found nothing and four assertions failed. The
