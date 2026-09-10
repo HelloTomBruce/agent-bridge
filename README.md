@@ -179,9 +179,9 @@ for (;;) {
 改动本包后想在真实项目里验证，用 tarball 而不是 `link:`：
 
 ```bash
-pnpm pack   # → tombruce-agent-bridge-0.2.0.tgz
-# 在目标项目里
-pnpm add file:../agent-bridge/tombruce-agent-bridge-0.2.0.tgz
+pnpm pack   # → tombruce-agent-bridge-<version>.tgz
+# 在目标项目里（用通配，省得每次改版本号）
+pnpm add file:../agent-bridge/tombruce-agent-bridge-*.tgz
 ```
 
 > ⚠️ **不要用 `pnpm link:` 协议**：Turbopack（Next 16）无法解析指向仓库外的
@@ -211,7 +211,7 @@ pnpm build       # tsc → dist/（ESM + .d.ts）
 
 ```bash
 # 版本号先改 package.json + CHANGELOG，再打 tag
-git tag v0.2.0 && git push origin v0.2.0
+git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
 ## 路线（规划中）

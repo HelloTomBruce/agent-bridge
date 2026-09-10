@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] — 2026-09-10
+
+仅文档。0.2.0 的 tarball 里 README 还写着本包"从 html-anything 抽出"，
+但这已是独立项目，出身说明只会误导读者。npm 上的 README 不可就地更新，
+故发一个 patch。
+
+### Changed
+
+- README 移除来历说明与「与 html-anything 的替换步骤」一节。其中通用的部分
+  （tarball 本地联调、`pnpm link:` 在 Turbopack 下解析失败的坑）改写为
+  「在其他项目里本地联调」保留。
+- CHANGELOG `0.1.0` 的措辞由 "Initial extraction from html-anything's
+  `lib/agents`" 改为 "Initial release"。
+
+> 代码零改动：`dist/` 与 0.2.0 逐字节一致。
+
 ## [0.2.0] — 2026-09-10
 
 Focus of this release: make the bridge trustworthy enough to `import` into a
